@@ -1,0 +1,44 @@
+# === Databases / SQLite ===
+*.db
+*.sqlite
+*.sqlite3
+
+# === Logs / Outputs / Runtime / Recovery ===
+logs/
+outputs/
+runtime/
+recovery/
+
+# === Data runtime / archive / quarantine / snapshots ===
+data/archive/
+data/production/
+data/quarantine/
+data/runtime/
+data/snapshots/
+data/market_cache.db
+data/intraday_cache.db
+data/news_cache.db
+
+# === Research data artifacts ===
+data/research/
+
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+
+# === Secrets / Env ===
+.env
+*.secret
+*credential*
+*token*
+*api_key*
+
+# === Generated large architecture artifacts ===
+docs/architecture/*.json
+
+# === OS / Editor ===
+.DS_Store
+*.swp
+*.swo
+*~

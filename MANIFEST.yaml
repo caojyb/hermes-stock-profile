@@ -1,0 +1,48 @@
+name: stock-work
+display_name: Stock Work
+type: hermes-stock-application
+
+hermes_profile:
+  name: stock
+  home: ${HERMES_HOME}
+
+roots:
+  stock_work: ${HERMES_HOME}/stock-work
+  skill: ${HERMES_HOME}/skills/stock-expert
+  scheduler: ${HERMES_HOME}/cron
+
+ownership:
+  hermes:
+    - config.yaml
+    - .env
+    - SOUL.md
+    - skills
+    - cron
+    - memories
+    - sessions
+    - state
+    - workspace
+
+  stock_work:
+    - app
+    - scripts
+    - config
+    - data
+    - outputs
+    - logs
+    - runtime
+    - research
+    - docs
+    - tests
+
+database_policy:
+  canonical_owner_required: true
+  production_research_isolation: true
+  databases_outside_data_forbidden: true
+
+scheduler:
+  owner: hermes
+  implementation_owner: stock-work
+
+safety:
+  auto_trading: false

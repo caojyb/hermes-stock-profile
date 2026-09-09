@@ -1,0 +1,78 @@
+version: "1.0"
+
+realtime:
+  quote:
+    primary:
+      provider: eastmoney
+      endpoint: push2delay.eastmoney.com
+      timeout: 10
+      retry: 3
+    fallback:
+      - provider: sina
+        endpoint: hq.sinajs.cn
+        timeout: 8
+        retry: 2
+    validation:
+      - price_range_check
+      - change_pct_check
+    cache:
+      ttl: 30
+
+historical:
+  kline:
+    primary:
+      provider: eastmoney
+      endpoint: push2.eastmoney.com
+      timeout: 15
+      retry: 3
+    fallback:
+      - provider: akshare
+        timeout: 20
+        retry: 2
+    validation:
+      - date_continuity_check
+      - volume_check
+    cache:
+      ttl: 86400
+
+financial:
+  reports:
+    primary:
+      provider: eastmoney
+      endpoint: datacenter.eastmoney.com
+      timeout: 20
+      retry: 3
+    fallback:
+      - provider: akshare
+        timeout: 30
+        retry: 2
+    validation:
+      - report_date_check
+      - field_completeness_check
+    cache:
+      ttl: 604800
+
+fund_flow:
+  main_fund:
+    primary:
+      provider: eastmoney
+      endpoint: push2delay.eastmoney.com
+      timeout: 10
+      retry: 3
+    fallback: []
+    validation:
+      - sign_check
+      - value_range_check
+    cache:
+      ttl: 86400
+  north_bound:
+    primary:
+      provider: eastmoney
+      endpoint: push2delay.eastmoney.com
+      timeout: 10
+      retry: 3
+    fallback: []
+    validation:
+      - value_range_check
+    cache:
+      ttl: 86400
