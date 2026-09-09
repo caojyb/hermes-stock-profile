@@ -16,5 +16,5 @@
 
 | date | change_id | type | description | baseline_impact | policy_version | code_commit | status | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|| 2026-09-09 | CHANGE-2026-09-09-001 | BASELINE_INITIALIZATION | Install Hermes Stock Agent Investment Decision System Baseline v1.2.1 FINAL | ESTABLISHED | — | — | COMPLETE | Governance directory initialized with BASELINE.md, AGENT_PROTOCOL.md, CHANGE_POLICY.md, CHANGE_LEDGER.md |
-|| 2026-09-09 | CHANGE-2026-09-09-002 | GIT_BASELINE_INITIALIZATION | Establish Git repository and initial code governance baseline for Hermes Stock Agent v1.2.1 | NONE | — | 63779d4 | COMPLETE | Git initialized at /home/caojy/.hermes/profiles/stock/stock-work; tag hermes-stock-baseline-v1.2.1 created |
+| 2026-09-09 | CHANGE-2026-09-09-001 | BASELINE_INITIALIZATION | Install Hermes Stock Agent Investment Decision System Baseline v1.2.1 FINAL | ESTABLISHED | — | — | COMPLETE | Governance directory initialized with BASELINE.md, AGENT_PROTOCOL.md, CHANGE_POLICY.md, CHANGE_LEDGER.md |
+| 2026-09-09 | CHANGE-2026-09-09-002 | GIT_BASELINE_INITIALIZATION | Establish Git repository and initial code governance baseline for Hermes Stock Agent v1.2.1 | NONE | — | 63779d4 | COMPLETE | Git initialized at /home/caojy/.hermes/profiles/stock/stock-work; tag hermes-stock-baseline-v1.2.1 created |
