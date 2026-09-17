@@ -122,6 +122,10 @@ class StockPathResolver:
         return self.runtime / "simulation.db"
 
     @property
+    def simulation_test_db(self) -> Path:
+        return self.runtime / "simulation_test.db"
+
+    @property
     def cf_cache_db(self) -> Path:
         return self.runtime / "cf_cache.db"
 
@@ -144,6 +148,10 @@ class StockPathResolver:
     @property
     def recommendation_pool_db(self) -> Path:
         return self.production / "recommendation_pool.db"
+
+    @property
+    def recommendation_outcomes_db(self) -> Path:
+        return self.production / "recommendation_outcomes.db"
 
     # ---------------------------------------------------------
     # Generic resolver

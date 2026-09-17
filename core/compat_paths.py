@@ -40,6 +40,10 @@ NEWS_CACHE_DB = resolver.news_cache_db
 
 RECOMMENDATION_POOL_DB = resolver.recommendation_pool_db
 
+RECOMMENDATION_OUTCOMES_DB = resolver.recommendation_outcomes_db
+
+REAL_PORTFOLIO_HISTORY_DB = resolver.runtime / "real_portfolio_history.db"
+
 
 # ------------------------------------------------------------
 # Explicit aliases for legacy naming variants
@@ -75,6 +79,8 @@ def get_db_path(name: str):
 
         "simulation": resolver.simulation_db,
         "simulation.db": resolver.simulation_db,
+        "simulation_test": resolver.simulation_test_db,
+        "simulation_test.db": resolver.simulation_test_db,
 
         "cf_cache": resolver.cf_cache_db,
         "cf_cache.db": resolver.cf_cache_db,
@@ -100,6 +106,13 @@ def get_db_path(name: str):
         ),
         "recommendation_pool.db": (
             resolver.recommendation_pool_db
+        ),
+
+        "real_portfolio_history": (
+            resolver.runtime / "real_portfolio_history.db"
+        ),
+        "real_portfolio_history.db": (
+            resolver.runtime / "real_portfolio_history.db"
         ),
     }
 
@@ -130,5 +143,6 @@ __all__ = [
     "NEWS_DB",
     "RECOMMENDATION_POOL_DB",
     "RECOMMENDATION_DB",
+    "REAL_PORTFOLIO_HISTORY_DB",
     "get_db_path",
 ]
