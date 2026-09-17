@@ -1,0 +1,1 @@
+# Strategy Registry research package.
