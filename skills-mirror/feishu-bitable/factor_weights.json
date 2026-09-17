@@ -1,0 +1,104 @@
+{
+  "timestamp": "2026-07-24 11:06",
+  "date": "2026-07-24",
+  "groups": {
+    "fundamental": 0.47776400093588683,
+    "valuation": 0.3597138532639442,
+    "technical": 0.16252214580016897
+  },
+  "factors": {
+    "roe": {
+      "weight": 0.2209,
+      "group_weight": 0.4778,
+      "effective_weight": 0.1056,
+      "ic": 0.3252
+    },
+    "net_margin": {
+      "weight": 0.2125,
+      "group_weight": 0.4778,
+      "effective_weight": 0.1015,
+      "ic": 0.3084
+    },
+    "profit_growth": {
+      "weight": 0.1921,
+      "group_weight": 0.4778,
+      "effective_weight": 0.0918,
+      "ic": 0.2678
+    },
+    "revenue_growth": {
+      "weight": 0.1627,
+      "group_weight": 0.4778,
+      "effective_weight": 0.0777,
+      "ic": 0.2097
+    },
+    "gross_margin": {
+      "weight": 0.1349,
+      "group_weight": 0.4778,
+      "effective_weight": 0.0644,
+      "ic": 0.1543
+    },
+    "debt_ratio": {
+      "weight": 0.0769,
+      "group_weight": 0.4778,
+      "effective_weight": 0.0367,
+      "ic": 0.0391
+    },
+    "pe_ttm": {
+      "weight": 0.3896,
+      "group_weight": 0.3597,
+      "effective_weight": 0.1401,
+      "ic": -0.1131
+    },
+    "pb_mrq": {
+      "weight": 0.6104,
+      "group_weight": 0.3597,
+      "effective_weight": 0.2196,
+      "ic": -0.2276
+    },
+    "rsi_14": {
+      "weight": 0.0977,
+      "group_weight": 0.1625,
+      "effective_weight": 0.0159,
+      "ic": 0.012
+    },
+    "boll_position": {
+      "weight": 0.0745,
+      "group_weight": 0.1625,
+      "effective_weight": 0.0121,
+      "ic": 0.0024
+    },
+    "macd_hist": {
+      "weight": 0.2412,
+      "group_weight": 0.1625,
+      "effective_weight": 0.0392,
+      "ic": -0.0708
+    },
+    "ma_bullish": {
+      "weight": 0.2369,
+      "group_weight": 0.1625,
+      "effective_weight": 0.0385,
+      "ic": 0.069
+    },
+    "volatility_20d": {
+      "weight": 0.3496,
+      "group_weight": 0.1625,
+      "effective_weight": 0.0568,
+      "ic": 0.1153
+    }
+  },
+  "source_ic": {
+    "macd_hist": -0.0708,
+    "ma_bullish": 0.069,
+    "volatility_20d": 0.1153,
+    "roe": 0.3252,
+    "profit_growth": 0.2678,
+    "revenue_growth": 0.2097,
+    "debt_ratio": 0.0391,
+    "gross_margin": 0.1543,
+    "net_margin": 0.3084,
+    "pe_ttm": -0.1131,
+    "pb_mrq": -0.2276,
+    "rsi_14": 0.012,
+    "boll_position": 0.0024
+  }
+}

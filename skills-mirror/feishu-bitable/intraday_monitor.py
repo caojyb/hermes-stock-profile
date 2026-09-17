@@ -1,0 +1,577 @@
+#!/usr/bin/env python3
+"""
+盘中实时监控脚本
+调度时间：每30分钟一次（09:00-11:30, 13:00-15:00，工作日）
+用法：python3 intraday_monitor.py scan3
+  scan3: 三级扫描（快速版）
+"""
+import sys
+sys.path.insert(0, __file__.rsplit('/', 1)[0])
+
+import signal
+import time
+import akshare as ak
+import pandas as pd
+from datetime import date
+from typing import List, Dict
+from bitable_reader import read_positions
+
+
+def is_trading_day():
+    """检查今天是否为 A 股交易日，非交易日则直接退出"""
+    try:
+        import socket
+        from threading import Thread
+
+        result = {"data": None, "error": None}
+
+        def _fetch():
+            try:
+                socket.setdefaulttimeout(3)
+                result["data"] = ak.tool_trade_date_hist_sina()
+            except Exception as e:
+                result["error"] = e
+            finally:
+                socket.setdefaulttimeout(None)
+
+        t = Thread(target=_fetch)
+        t.daemon = True
+        t.start()
+        t.join(timeout=5)  # 最多等5秒
+        if t.is_alive():
+            print("交易日判断超时（5秒），继续执行")
+            return True
+        if result["error"]:
+            print(f"交易日判断异常: {result['error']}，继续执行")
+            return True
+        df = result["data"]
+        if df is None:
+            return True
+        trading_dates = set(pd.to_datetime(df['trade_date']).dt.date)
+        if date.today() not in trading_dates:
+            print(f"今日 ({date.today()}) 非 A 股交易日，跳过执行")
+            return False
+    except Exception as e:
+        print(f"交易日判断异常: {e}，继续执行")
+    return True
+from stock_data import get_stock_quote
+from signal_engine import SignalEngine
+from feishu_sender import send_signal_alert, feishu_send_message
+
+# 本地缓存市场扫描（秒出结果，不依赖实时API）
+try:
+    from market_cache import get_db, scan_market
+    HAS_MARKET_CACHE = True
+except ImportError:
+    HAS_MARKET_CACHE = False
+
+
+# 5分钟硬性超时保护 - disabled for debugging
+# def timeout_handler(signum, frame):
+#     print("TIMEOUT: 脚本执行超过5分钟，强制终止")
+#     sys.exit(1)
+# signal.signal(signal.SIGALRM, timeout_handler)
+# signal.alarm(300)
+
+
+def get_stock_quote_batch(codes: List[str]) -> Dict[str, Dict]:
+    """批量获取多只股票实时行情（并行并发，替代逐个查询）"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    results = {}
+    
+    def fetch_one(code):
+        return code, get_stock_quote("A", code)
+    
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {ex.submit(fetch_one, code): code for code in codes}
+        for future in as_completed(futures):
+            try:
+                code, q = future.result()
+                if "error" not in q:
+                    results[code] = q
+            except Exception as e:
+                pass
+    return results
+
+
+def quick_scan(positions):
+    """
+    快速扫描持仓股，推送有明确方向的信号。
+    只推送：level >= 4（买入信号）或 level <= 1（减仓/止损信号）
+    多股行情查询并行化（ThreadPoolExecutor）提升效率。
+    """
+    import sys as _sys3
+    print("DEBUG: quick_scan() started", len(positions), flush=True)
+    _sys3.stdout.flush()
+    from signal_engine import SignalEngine
+    
+    # 过滤有效持仓
+    valid_positions = [p for p in positions if p.stock_code and p.cost_price > 0]
+    if not valid_positions:
+        return []
+    
+    # 第一步：并行批量获取所有持仓股的实时行情（10线程并发）
+    codes = [p.stock_code for p in valid_positions]
+    print(f"DEBUG: batch fetching quotes for {len(codes)} positions...", flush=True)
+    _sys3.stdout.flush()
+    quote_map = get_stock_quote_batch(codes)
+    print(f"DEBUG: got {len(quote_map)} quotes", flush=True)
+    _sys3.stdout.flush()
+    
+    # 第二步：逐个分析（已有实时价格，不需要重复查API）
+    alerts = []
+    engine = SignalEngine()
+    for pos in valid_positions:
+        code = pos.stock_code
+        q = quote_map.get(code, {})
+        if not q:
+            continue
+        
+        try:
+            current_price = q.get("price", 0)
+            change_pct = q.get("change_pct", 0)
+            
+            # SignalEngine分析
+            signal_result = engine.analyze_position(pos)
+            advice = signal_result.advice
+            signal_level = advice.signal_level if advice else 0
+            stock_name = signal_result.stock_name if hasattr(signal_result, 'stock_name') and signal_result.stock_name else q.get("name", code)
+            
+            if signal_level >= 4 or signal_level <= 1:
+                alerts.append({
+                    "stock_code": code,
+                    "stock_name": stock_name,
+                    "current_price": current_price,
+                    "change_pct": change_pct,
+                    "signal_level": signal_level,
+                    "action": advice.action if advice else "持有",
+                    "stop_loss": advice.stop_loss if advice else 0,
+                    "take_profit": advice.take_profit_1 if advice else 0,
+                    "reason": ", ".join(advice.reasons[:2]) if advice and advice.reasons else "技术面信号",
+                })
+        except Exception as e:
+            print(f"扫描 {code} 失败: {e}")
+            continue
+    
+    return alerts
+
+
+def get_market_opportunities(limit=8):
+    """
+    从本地缓存查询全市场建仓机会（三层筛选），
+    对候选股查实时价格 + 实时重算 RSI（用K线历史+实时价替代昨日缓存RSI）。
+
+    三层分级：
+    - 保守层：RSI < 30 且 score >= 50 → 🟢建仓
+    - 正常层：RSI < 40 且 score >= 45 → 🔵重点
+    - 进攻层：RSI < 50 且 score >= 40 → 🟡观察
+
+    返回: [(code, name, price, today_chg, rsi, macd_hist, boll_pos, score, level, tier), ...]
+    tier = '保守'/'正常'/'进攻'
+    """
+    if not HAS_MARKET_CACHE:
+        return []
+
+    try:
+        from signal_engine import TechnicalIndicators
+
+        conn = get_db()
+        # 尝试 JOIN double_up_scores（前置过滤：只从五维高分股中筛选技术面买点）
+        # 若 double_up_scores 表不存在或为空（周更数据尚未写入），自动退化为全市场扫描
+        try:
+            rows = conn.execute('''
+                SELECT
+                    i.code, s.name,
+                    i.current_price, i.prev_close, i.change_pct,
+                    i.rsi_14, i.macd, i.macd_signal, i.macd_hist,
+                    i.boll_position,
+                    i.boll_middle, i.boll_upper, i.boll_lower,
+                    i.ma5, i.ma10, i.ma20, i.ma60,
+                    i.signal_score, i.signal_level,
+                    COALESCE(ds.total_score, 0) AS double_up_score
+                FROM indicators i
+                JOIN stocks s ON s.code = i.code
+                LEFT JOIN double_up_scores ds ON ds.code = i.code
+                    AND ds.scan_date = (SELECT MAX(scan_date) FROM double_up_scores)
+                WHERE i.current_price > 0
+                  AND s.name NOT LIKE 'ST%'
+                  AND s.name NOT LIKE '*ST%'
+                  AND s.name NOT LIKE 'S%'
+                  AND i.signal_score >= 40
+                  AND i.signal_level >= 4
+                  AND i.rsi_14 < 50
+                  AND i.boll_upper > 0 AND i.boll_lower > 0
+                  AND (ds.total_score >= 60 OR ds.total_score IS NULL)
+                ORDER BY i.signal_score DESC
+                LIMIT ?
+            ''', (limit * 3,)).fetchall()
+            has_double_up = True
+        except Exception:
+            # double_up_scores 表不存在，退化为全市场扫描（向后兼容）
+            rows = conn.execute('''
+                SELECT
+                    i.code, s.name,
+                    i.current_price, i.prev_close, i.change_pct,
+                    i.rsi_14, i.macd, i.macd_signal, i.macd_hist,
+                    i.boll_position,
+                    i.boll_middle, i.boll_upper, i.boll_lower,
+                    i.ma5, i.ma10, i.ma20, i.ma60,
+                    i.signal_score, i.signal_level
+                FROM indicators i
+                JOIN stocks s ON s.code = i.code
+                WHERE i.current_price > 0
+                  AND s.name NOT LIKE 'ST%'
+                  AND s.name NOT LIKE '*ST%'
+                  AND s.name NOT LIKE 'S%'
+                  AND i.signal_score >= 40
+                  AND i.signal_level >= 4
+                  AND i.rsi_14 < 50
+                  AND i.boll_upper > 0 AND i.boll_lower > 0
+                ORDER BY i.signal_score DESC
+                LIMIT ?
+            ''', (limit * 3,)).fetchall()
+            has_double_up = False
+        finally:
+            conn.close()
+
+        if not rows:
+            return []
+
+        # 批量查实时价格（一次HTTP请求替代N次，大幅降低延迟）
+        codes = [r[0] for r in rows]
+        from stock_data import StockDataFetcher
+        fetcher = StockDataFetcher()
+        # 强制 IPv4 避免腾讯API的AAAA记录超时
+        import socket
+        _orig_gai = socket.getaddrinfo
+        def _ipv4_only_gai(*args, **kwargs):
+            results = _orig_gai(*args, **kwargs)
+            return [(af, st, pr, cn, sa) for af, st, pr, cn, sa in results if af == socket.AF_INET]
+        socket.getaddrinfo = _ipv4_only_gai
+        try:
+            quotes_raw = fetcher.get_a_share_quotes(codes)
+        finally:
+            socket.getaddrinfo = _orig_gai
+        # 构建 code -> quote 字典
+        quote_map = {}
+        for q in quotes_raw:
+            if q and "code" in q:
+                code_key = q["code"]
+                quote_map[code_key] = q
+
+        candidates = []
+
+        for r in rows:
+            code = r[0]
+            name = r[1]
+            cached_price = r[2]
+            prev_close = r[3]
+            cached_rsi = r[5]
+            macd = r[6]
+            macd_signal = r[7]
+            macd_hist = r[8]
+            boll_pos_cached = r[9]
+            boll_m = r[10]
+            boll_u = r[11]
+            boll_l = r[12]
+            ma5 = r[13]
+            ma10 = r[14]
+            ma20 = r[15]
+            ma60 = r[16]
+            score = r[17]
+            level = r[18]
+
+            # 查实时价格（从批量结果字典中取，无API调用开销）
+            q = quote_map.get(code)
+            if q and q.get("price", 0) > 0:
+                current_price = q["price"]
+                today_chg = q.get("change_pct", 0)
+            else:
+                current_price = cached_price
+                today_chg = r[4] if r[4] else 0
+
+            # 重算布林位（基于实时价）
+            if boll_l and boll_u and boll_u != boll_l:
+                boll_pos = (current_price - boll_l) / (boll_u - boll_l) * 100
+                # P0修复：实时布林位也可能超出 [0,100]，clamp 防止推荐逻辑误判
+                boll_pos = max(0.0, min(100.0, boll_pos))
+            else:
+                boll_pos = boll_pos_cached if boll_pos_cached else 50
+
+            # ── 实时重算 RSI ───────────────────────────────────────
+            # 取该股最近15天K线收盘价（取最新K线日期为基准）
+            last_kline = conn.execute(
+                'SELECT MAX(date) FROM klines WHERE code = ?', (code,)
+            ).fetchone()
+            if last_kline and last_kline[0]:
+                klines = conn.execute('''
+                    SELECT close FROM klines
+                    WHERE code = ? AND date >= date(?, '-15 days')
+                    ORDER BY date ASC
+                ''', (code, last_kline[0])).fetchall()
+            else:
+                klines = []
+
+            # 如果K线不足15天，用缓存RSI
+            if not klines or len(klines) < 15:
+                rsi = cached_rsi
+            else:
+                # 用实时价替代今天（最后一条）的收盘价，重算RSI
+                closes = [float(k[0]) for k in klines]
+                closes[-1] = current_price  # 替换为实时价
+                rsi = TechnicalIndicators.calculate_rsi(closes, 14)
+                if rsi is None:
+                    rsi = cached_rsi
+
+            # ── 生成推荐原因 ───────────────────────────────────────
+            reasons = []
+            if rsi is not None:
+                if rsi < 30:
+                    reasons.append(f"RSI严重超卖({rsi:.0f})，反弹概率大")
+                elif rsi < 40:
+                    reasons.append(f"RSI处于低位({rsi:.0f})，向上空间充足")
+                elif rsi < 50:
+                    reasons.append(f"RSI健康区间({rsi:.0f})")
+
+            if macd_hist is not None and macd_hist > 0:
+                reasons.append("MACD红柱，动能向上")
+            elif macd_hist is not None and macd_hist < 0:
+                reasons.append(f"MACD绿柱(历史)，等待转红")
+
+            # 均线多头判断
+            ma_bullish = False
+            if all(v is not None for v in [ma5, ma10, ma20, ma60]):
+                if ma5 > ma10 > ma20 > ma60:
+                    reasons.append("均线多头排列，上涨趋势清晰")
+                    ma_bullish = True
+                elif ma5 > ma10 and ma10 > ma20:
+                    reasons.append("短期均线多头，短线强势")
+                    ma_bullish = True
+
+            # 布林低位判断
+            if boll_pos is not None and boll_pos < 20:
+                reasons.append(f"股价贴近布林下轨({boll_pos:.0f}%)，超卖区域")
+            elif boll_pos is not None and boll_pos < 40:
+                reasons.append(f"股价处于布林中下轨({boll_pos:.0f}%)，相对低位")
+
+            # 综合评分说明
+            if score >= 60:
+                reasons.append(f"综合评分强劲({score:.0f}分)")
+            elif score >= 45:
+                reasons.append(f"综合评分良好({score:.0f}分)")
+
+            # ── 定层级（只保留 level >= 4 的买卖信号）─────────────
+            if level >= 4 and rsi is not None and rsi < 30 and score >= 40:
+                tier = '保守'   # RSI<30超卖 + 中高分 = 建仓级
+            elif level >= 4 and rsi is not None and rsi < 40 and score >= 35:
+                tier = '正常'   # RSI<40 + 较好分 = 重点关注级
+            else:
+                tier = None    # 不满足买入条件则跳过
+
+            if tier and reasons:
+                # 支撑 = 布林下轨， 压力 = 布林上轨
+                candidates.append({
+                    "code": code,
+                    "name": name,
+                    "price": current_price,
+                    "today_chg": today_chg,
+                    "rsi": rsi,
+                    "macd_hist": macd_hist,
+                    "boll_pos": boll_pos,
+                    "boll_lower": boll_l,
+                    "boll_upper": boll_u,
+                    "boll_middle": boll_m,
+                    "score": score,
+                    "level": level,
+                    "tier": tier,
+                    "reasons": reasons,
+                })
+
+        conn.close()
+
+        # 按 score 降序，取前limit条
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        return candidates[:limit]
+
+    except Exception as e:
+        print(f"本地缓存查询失败: {e}")
+        import traceback; traceback.print_exc()
+        return []
+
+
+def build_opportunity_text(rows, data_date=None):
+    """把市场机会行转成飞书消息文本（买入信号专用版）
+    只展示 level >= 4 的建仓/重点信号，包含推荐原因和支撑/压力位
+    """
+    if not rows:
+        return ""
+    tier_tag = {'保守': '🟢', '正常': '🔵'}
+    tier_name = {'保守': '建仓级', '正常': '重点关注'}
+    level_map = {5: '🚀', 4: '⚡'}
+
+    date_str = f"（数据截至 {data_date} 收盘）" if data_date else "（盘中实时校正）"
+    parts = [f"📊 买入信号推荐 {date_str}", ""]
+
+    for item in rows:
+        code = item["code"]
+        name = item["name"]
+        price = item["price"]
+        chg = item["today_chg"]
+        rsi = item["rsi"]
+        macd_hist = item["macd_hist"]
+        boll_pos = item["boll_pos"]
+        boll_l = item["boll_lower"]
+        boll_u = item["boll_upper"]
+        boll_m = item["boll_middle"]
+        score = item["score"]
+        level = item["level"]
+        tier = item["tier"]
+        reasons = item.get("reasons", [])
+
+        tag = tier_tag.get(tier, '🔵')
+        sig_icon = level_map.get(level, '📊')
+        name = (name or code)[:8]
+        chg_str = f'{chg:+.2f}%' if chg else 'N/A'
+        rsi_str = f'{rsi:.0f}' if rsi else '?'
+        # 布林位置可能为负（股价跌破下轨），显示时 clamp 到 0
+        boll_pos_display = max(0, boll_pos) if boll_pos is not None else 0
+        boll_str = f'{boll_pos_display:.0f}%' if boll_pos is not None else '?'
+
+        # 支撑/压力位（精确到小数点后2位）
+        support = f"{boll_l:.2f}" if boll_l else '—'
+        resistance = f"{boll_u:.2f}" if boll_u else '—'
+
+        parts.append(f"{tag} {sig_icon}{tier_name.get(tier, tier)} | {name}（{code}）")
+        parts.append(f"   现价 {price:.2f}  {chg_str}  RSI {rsi_str}  布林 {boll_str}  {score:.0f}分")
+        parts.append(f"   ⬆️ 压力位: {resistance}  ⬇️ 支撑位: {support}")
+        if reasons:
+            # 取前3条最关键的推荐原因
+            top_reasons = reasons[:3]
+            parts.append(f"   📌 推荐理由: {' | '.join(top_reasons)}")
+        parts.append("")
+
+    return "\n".join(parts).strip()
+
+
+def main():
+    import sys as _sys2
+    print("DEBUG: main() started", flush=True)
+    _sys2.stdout.flush()
+    if not is_trading_day():
+        return
+
+    import argparse
+    parser = argparse.ArgumentParser(description='盘中监控')
+    parser.add_argument('--position-only', action='store_true',
+                        help='仅扫描持仓，不推送市场机会')
+    parser.add_argument('mode', nargs='?', default='scan3',
+                        help='scan3=持仓+机会(默认), scan4=纯市场机会')
+    args = parser.parse_args()
+    mode = args.mode
+
+    try:
+        if mode == "scan4":
+            # 独立推送全市场机会，不依赖持仓
+            opp_rows = get_market_opportunities(limit=8)
+            # 取缓存最新日期
+            data_date = None
+            try:
+                conn = get_db()
+                row = conn.execute("SELECT MAX(date) FROM indicators").fetchone()
+                conn.close()
+                if row and row[0]:
+                    data_date = row[0]
+            except Exception:
+                pass
+            opp_text = build_opportunity_text(opp_rows, data_date=data_date)
+            if opp_text:
+                result = feishu_send_message(opp_text)
+                if result.get("code") == 0:
+                    print("个股推荐发送成功")
+                    # 同步记录到 Bitable
+                    try:
+                        from bitable_writer import add_recommendation_records
+                        recs = [
+                            {
+                                "stock_code": r["code"],
+                                "stock_name": r["name"],
+                                "price": r["price"],
+                                "today_chg": r["today_chg"],
+                                "rsi": r["rsi"],
+                                "boll_pos": r["boll_pos"],
+                                "score": r["score"],
+                                "tier": r["tier"],
+                            }
+                            for r in opp_rows
+                        ]
+                        add_recommendation_records(recs)
+                    except Exception as e:
+                        print(f"Bitable记录失败（不影响推送）: {e}")
+                else:
+                    print(f"个股推荐发送失败: {result}")
+            else:
+                print("无满足条件的个股推荐")
+            return
+
+        # scan3 及原有模式：持仓预警 + 附带机会
+        positions = read_positions()
+        if not positions:
+            print("无持仓数据，跳过扫描")
+            return
+
+        alerts = quick_scan(positions)
+
+        # --position-only 模式：只推持仓信号，不推市场机会
+        if args.position_only:
+            if alerts:
+                for alert in alerts:
+                    result = send_signal_alert(
+                        stock_code=alert["stock_code"],
+                        stock_name=alert["stock_name"],
+                        signal_level=alert["signal_level"],
+                        action=alert["action"],
+                        current_price=alert["current_price"],
+                        change_pct=alert["change_pct"],
+                        stop_loss=alert["stop_loss"],
+                        take_profit=alert["take_profit"],
+                        reason=alert["reason"],
+                    )
+                    if result.get("code") == 0:
+                        print(f"发送 {alert['stock_name']} L{alert['signal_level']} 成功")
+                    time.sleep(0.5)
+            else:
+                print("无需要推送的预警信号")
+            return
+
+        # 默认模式：持仓信号 + 市场机会（不重复）
+        opp_rows = get_market_opportunities(limit=8)
+        opp_text = build_opportunity_text(opp_rows)
+
+        if alerts:
+            for alert in alerts:
+                extra = f"\n\n{opp_text}" if opp_text else ""
+                result = send_signal_alert(
+                    stock_code=alert["stock_code"],
+                    stock_name=alert["stock_name"],
+                    signal_level=alert["signal_level"],
+                    action=alert["action"],
+                    current_price=alert["current_price"],
+                    change_pct=alert["change_pct"],
+                    stop_loss=alert["stop_loss"],
+                    take_profit=alert["take_profit"],
+                    reason=alert["reason"] + extra,
+                )
+                if result.get("code") == 0:
+                    print(f"发送 {alert['stock_name']} L{alert['signal_level']} 成功")
+                time.sleep(0.5)
+        else:
+            print("无需要推送的预警信号")
+
+    except Exception as e:
+        error_msg = f"盘中监控异常: {str(e)}"
+        print(error_msg)
+        feishu_send_message(f"⚠️ {error_msg}")
+
+
+if __name__ == "__main__":
+    main()
