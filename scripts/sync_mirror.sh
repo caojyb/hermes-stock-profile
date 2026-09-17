@@ -1,0 +1,109 @@
+#!/bin/bash
+# sync_mirror.sh — stock-work 镜像同步器（方案 B）
+# 作用：把生产侧（profiles/stock/scripts/cron + skills/.../feishu-bitable）
+#       与 git 内镜像（scripts-cron/ + skills-mirror/）对齐 + 漂移检测。
+#
+# 用法：
+#   bash scripts/sync_mirror.sh           # 同步生产 → 镜像（并显示 git 差异）
+#   bash scripts/sync_mirror.sh --check   # 只检测漂移，不改文件；有漂移 exit 1
+#
+# 纪律：修改代码永远在【生产侧】做（或 skill 源文件），然后跑本脚本；
+#       镜像目录只由本脚本生成，禁止手改（手改会被 --check 抓出）。
+
+set -uo pipefail
+
+STOCK_PROFILE="$HOME/.hermes/profiles/stock"
+REPO="$STOCK_PROFILE/stock-work"
+CRON_SRC="$STOCK_PROFILE/scripts/cron"
+SKILL_SRC="$STOCK_PROFILE/skills/stock/stock-expert/skills/feishu-bitable"
+CRON_DST="$REPO/scripts-cron"
+SKILL_DST="$REPO/skills-mirror/feishu-bitable"
+
+# 镜像范围：scripts/cron 只收顶层 .py/.sh（运行时子目录 decision/、reports/、
+# logs/、.pytest_cache、*.db、*.json 状态文件一律不镜像——它们是运行时产物）
+CRON_EXCLUDES=(--exclude='*.[!p][!y]')  # 占位，实际用 find 过滤
+
+CHECK_ONLY=0
+[ "${1:-}" = "--check" ] && CHECK_ONLY=1
+
+sync_cron() {
+    local drift=0
+    # 用临时清单做精确对齐：镜像侧 = 生产侧顶层 py/sh 的精确集合
+    local tmp_src tmp_dst
+    tmp_src=$(mktemp); tmp_dst=$(mktemp)
+    find "$CRON_SRC" -maxdepth 1 \( -name '*.py' -o -name '*.sh' \) -printf '%f\n' | sort > "$tmp_src"
+    (cd "$CRON_DST" && ls | sort) > "$tmp_dst" 2>/dev/null
+
+    local diff_files
+    diff_files=$(comm -3 "$tmp_src" "$tmp_dst" | tr -d ' ' | sort -u)
+    local content_diff
+    content_diff=$(rsync -rcn --out-format='%n' \
+        --include='*.py' --include='*.sh' --exclude='*' \
+        "$CRON_SRC/" "$CRON_DST/" 2>/dev/null | grep -v '/$' || true)
+
+    if [ -n "$diff_files" ] || [ -n "$content_diff" ]; then
+        drift=1
+        echo "⇋ scripts-cron 漂移:"
+        [ -n "$diff_files" ] && echo "$diff_files" | sed 's/^/    集合差异: /'
+        [ -n "$content_diff" ] && echo "$content_diff" | sed 's/^/    内容差异: /'
+        if [ "$CHECK_ONLY" -eq 0 ]; then
+            find "$CRON_SRC" -maxdepth 1 \( -name '*.py' -o -name '*.sh' \) -exec cp {} "$CRON_DST/" \;
+            # 删除生产侧已不存在的镜像文件
+            (cd "$CRON_DST" && ls) | while read -r f; do
+                [ -f "$CRON_SRC/$f" ] || { case "$f" in *.py|*.sh) rm "$CRON_DST/$f";; esac; }
+            done
+            echo "  → 已同步生产 → 镜像"
+        fi
+    else
+        echo "✓ scripts-cron IN-SYNC"
+    fi
+    rm -f "$tmp_src" "$tmp_dst"
+    return $drift
+}
+
+sync_skill() {
+    local drift=0
+    local content_diff
+    content_diff=$(rsync -rcn --delete --out-format='%n' \
+        --exclude='__pycache__' --exclude='*.bak*' --exclude='*.pyc' \
+        "$SKILL_SRC/" "$SKILL_DST/" 2>/dev/null | grep -v '/$' || true)
+
+    if [ -n "$content_diff" ]; then
+        drift=1
+        echo "⇋ skills-mirror 漂移:"
+        echo "$content_diff" | sed 's/^/    /'
+        if [ "$CHECK_ONLY" -eq 0 ]; then
+            rsync -rc --delete \
+                --exclude='__pycache__' --exclude='*.bak*' --exclude='*.pyc' \
+                "$SKILL_SRC/" "$SKILL_DST/"
+            echo "  → 已同步生产 → 镜像"
+        fi
+    else
+        echo "✓ skills-mirror IN-SYNC"
+    fi
+    return $drift
+}
+
+cd "$REPO" || exit 2
+drift_total=0
+
+sync_cron   || drift_total=1
+sync_skill  || drift_total=1
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+    if [ "$drift_total" -eq 1 ]; then
+        echo ""
+        echo "❌ DRIFT DETECTED — 生产与镜像不一致。运行 bash scripts/sync_mirror.sh 同步后 git commit"
+        exit 1
+    else
+        echo ""
+        echo "✅ NO DRIFT — 镜像与生产一致"
+        exit 0
+    fi
+else
+    if [ "$drift_total" -eq 1 ]; then
+        echo ""
+        echo "已同步。待提交的变更："
+        git status --short scripts-cron/ skills-mirror/
+    fi
+fi
