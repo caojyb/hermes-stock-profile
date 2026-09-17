@@ -42,3 +42,6 @@ docs/architecture/*.json
 *.swp
 *.swo
 *~
+
+# === Runtime state (heartbeats / counters / caches) ===
+data/state/
