@@ -14,7 +14,10 @@
 
 ## 变更记录
 
-| date | change_id | type | description | baseline_impact | policy_version | code_commit | status | notes |
+|| date | change_id | type | description | baseline_impact | policy_version | code_commit | status | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-09-09 | CHANGE-2026-09-09-001 | BASELINE_INITIALIZATION | Install Hermes Stock Agent Investment Decision System Baseline v1.2.1 FINAL | ESTABLISHED | — | — | COMPLETE | Governance directory initialized with BASELINE.md, AGENT_PROTOCOL.md, CHANGE_POLICY.md, CHANGE_LEDGER.md |
 | 2026-09-09 | CHANGE-2026-09-09-002 | GIT_BASELINE_INITIALIZATION | Establish Git repository and initial code governance baseline for Hermes Stock Agent v1.2.1 | NONE | — | 63779d4 | COMPLETE | Git initialized at /home/caojy/.hermes/profiles/stock/stock-work; tag hermes-stock-baseline-v1.2.1 created |
+| 2026-09-10 | CHANGE-2026-09-10-001 | BASELINE_COMPLIANCE_REMEDIATION | Sync CODE_BASELINE.md with actual repo state; declare production boundary outside stock-work | NONE | — | f22cbc7 | COMPLETE | Updated CODE_BASELINE.md to reflect actual branch/commit/working_tree and production asset boundary |
+| 2026-09-10 | CHANGE-2026-09-10-002 | CONTRACT_IMPLEMENTATION | Populate Decision State Contract fields in engine.py and real_portfolio_truth.py | NONE | — | f22cbc7 | COMPLETE | Added policy_action/engine_result/final_action/block_reason/execution_status and canonical source/quality_status |
+| 2026-09-10 | CHANGE-2026-09-10-003 | CRON_CONTRACT_FIX | Add missing Baseline Cron Contract fields to all 22 production jobs | NONE | — | f22cbc7 | COMPLETE | jobs.json updated with purpose/input/output/consumer/frequency/dependency/failure_behavior/domain/production_or_research |
