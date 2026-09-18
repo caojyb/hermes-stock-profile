@@ -1,7 +1,7 @@
 #!/bin/bash
 # no_agent wrapper: 全流程引擎 + 知识库推送 + 学习记录
 cd /home/caojy/.hermes/profiles/stock/skills/stock/stock-expert/skills/feishu-bitable || exit 2
-source ~/.hermes/venv/bin/activate 2>/dev/null
+source /home/caojy/.hermes/profiles/stock/.venv/bin/activate 2>/dev/null
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
 out=$(/home/caojy/.hermes/profiles/stock/.venv/bin/python3 stock_pipeline.py --quick 2>&1); c1=$?
 kb=$(/home/caojy/.hermes/profiles/stock/.venv/bin/python3 kb_sync.py push --pipeline 2>&1); c2=$?

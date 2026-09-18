@@ -20,11 +20,8 @@ export MARKET_CACHE_QUIET=1
 # 确保 core 包可导入（market_cache.py 依赖 core.compat_paths）
 export PYTHONPATH="/home/caojy/.hermes/profiles/stock/stock-work:${PYTHONPATH:-}"
 
-# 检测可用 Python 解释器：优先 .venv，其次 venv，最后系统 python3
+# 检测可用 Python 解释器：优先 profile .venv，最后系统 python3
 PYTHON_BIN="/home/caojy/.hermes/profiles/stock/.venv/bin/python3"
-if [ ! -x "$PYTHON_BIN" ]; then
-    PYTHON_BIN="/home/caojy/.hermes/profiles/stock/.venv/bin/python3"
-fi
 if [ ! -x "$PYTHON_BIN" ]; then
     PYTHON_BIN="python3"
 fi

@@ -8,7 +8,7 @@ hermes_profile:
 
 roots:
   stock_work: ${HERMES_HOME}/stock-work
-  skill: ${HERMES_HOME}/skills/stock-expert
+  skill: ${HERMES_HOME}/skills/stock/stock-expert
   scheduler: ${HERMES_HOME}/cron
 
 ownership:
@@ -24,8 +24,8 @@ ownership:
     - workspace
 
   stock_work:
-    - app
     - scripts
+    - scripts-cron
     - config
     - data
     - outputs

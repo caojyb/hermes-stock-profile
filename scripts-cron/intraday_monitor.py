@@ -467,6 +467,17 @@ def main():
     if not is_trading_day():
         return
 
+    # 交易时段守卫（2026-09-18 调度修复）：cron 表达式 */15 9-14 覆盖午休与盘后，
+    # 这里按 A 股交易时段二次过滤，午休/收盘后直接跳过，避免无效运行
+    from datetime import datetime as _dt
+    _now = _dt.now()
+    _hm = _now.hour * 60 + _now.minute
+    _in_am = 9 * 60 + 30 <= _hm <= 11 * 60 + 30
+    _in_pm = 13 * 60 <= _hm <= 15 * 60
+    if not (_in_am or _in_pm):
+        print(f"非交易时段（{_now.strftime('%H:%M')}），跳过本次运行")
+        return
+
     import argparse
     parser = argparse.ArgumentParser(description='盘中监控')
     parser.add_argument('--position-only', action='store_true',

@@ -8,18 +8,23 @@
 
 | 时间 | Job | 脚本 | 职责 | 飞书推送 | 状态 |
 |------|-----|------|------|----------|------|
-| 09:30 | `double-monitor-daily` | `double_monitor.py` | 持仓监控 + 风控 + 信号执行 | ✅ | 活跃 |
-| 09:30 | `check-drawdown-weekly` | `check_drawdown_weekly.py` | 周回撤检查 (<15% 发飞书) | ✅ | 新增 |
-| 10:00 | `stock-intraday-minute` | `stock_intraday_minute.py` | 分钟级 K 线缓存 | ❌ | 活跃 |
-| 10:30 | `stock-opportunity-push` | `stock_opportunity_scan.py` | 翻倍潜力扫描 + 推送到候选人 | ❌ | 活跃 |
-| 11:30 | `stock-recommendation-pool-weekly` | `weekly_pool_report.sh` | 推荐池周报 | ✅ | 活跃 |
-| 15:30 | `daily-data-refresh` | `daily_data_refresh.py` | 盘后数据刷新 (K线/财务/龙虎榜) | ❌ | 活跃 |
-| 15:35 | `stock-lhb-daily` | `lhb_monitor.py` | 龙虎榜数据 + 候选池关联 | ✅ | 加飞书 |
+| 08:05 | `cron-health-sentinel` | `cron_health_sentinel.py` | cron 健康哨兵（WARN 静默失败/停机缺口/failed）+ crash 日志轮转 | 异常时✅ | 2026-09-18 新增 |
+| 08:25 | `mirror-drift-check` | `mirror_drift_check.sh` | 生产↔git 镜像漂移检测 | 漂移时✅ | 2026-09-18 新增 |
+| 08:30 | `lint-db-paths` | `lint_no_hardcoded_db.sh` | 硬编码 DB 路径检查 | 失败时✅ | 活跃 |
+| 09:35 | `position-stop-loss-alert` | `position_stop_loss_alert.py` | 真实持仓统一决策（止损/仓位建议，质量守卫硬失败） | 非HOLD✅ | 活跃 |
+| 10:00 | `hot-sector-scanner` | `hot_sector_scanner.py` | 热点板块扫描 | ✅ | 活跃 |
+| */30 9-11,13-15 | `stock-opportunity-push` | `stock_opportunity_scan.py` | 翻倍潜力扫描（含尾盘 15:00） | ✅ | 活跃 |
+| */15 9-14 | `stock-intraday-minute` | `intraday_monitor.py` | 盘中监控（脚本内交易时段守卫，午休/盘后跳过） | 信号✅ | 活跃 |
+| 11:30(六) | `stock-recommendation-pool-weekly` | `weekly_pool_report.sh` | 推荐池周报 | ✅ | 活跃 |
+| 15:30 | `daily-sentiment-report` | `sentiment_thermo.sh` | 情绪温度计 | ✅ | 活跃 |
+| 15:35 | `stock-lhb-daily` | `lhb_monitor.py` | 龙虎榜数据 + 候选池关联 | ✅ | 活跃 |
 | 15:40 | `stock-news-sentiment-pilot` | `news_sentiment.py` | AI 新闻解读 | ✅ | 活跃 |
-| 15:40 | `daily-sentiment-report` | `sentiment_thermo.sh` | 情绪温度计 | ✅ | 活跃 |
-| 15:40 | `hot-sector-scanner` | `hot_sector_scanner.py` | 热点板块扫描 | ✅ | 加飞书 |
-| 15:45 | `position-stop-loss-alert` | `position_stop_loss_alert.py` | 持仓止损告警 | ✅ | 活跃 |
-| 17:00 | `market-env-report` | `market_env_report.sh` | 市场环境报告 | ✅ | 活跃 |
+| 16:30 | `stock-market-cache-refresh` | `market_cache_refresh.sh` | 全市场K线增量刷新 | 失败✅ | 活跃 |
+| 16:40 | `daily-data-refresh` | `daily_data_refresh.py` | 盘后数据刷新 (K线/财务/龙虎榜) | ❌ | 活跃 |
+| 16:50 | `double-monitor-daily` | `double_monitor.py` | 翻倍策略信号扫描+模拟交易 | ✅ | 活跃 |
+| 17:10 | `deep-position-review` | (agent) | 持仓深度综合诊断 | ✅ | 2026-09-18 从16:50挪出避让 |
+| 17:30 | `track-outcomes-daily` | `track_outcomes.py` | 推荐结果 outcome 回写 | 异常✅ | 2026-09-18 限交易日 |
+| 17:50 | `check-market-cache-health` | `check_market_cache_health.py` | 数据库健康检查 | 异常✅ | 2026-09-18 限交易日 |
 
 ## 周链（周日）
 
