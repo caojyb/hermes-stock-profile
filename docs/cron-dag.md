@@ -93,6 +93,7 @@
 - 合并 job 需先评估数据依赖链、触发时机、输出类型
 
 ## 治理规则（Census 2026-09-18）
+- **手工验证必须留痕**：任何手动触发的验证必须 tee 到 cron/output/manual-verification-<日期>/ 或写入 heartbeat detail——不留档的验证视为未发生（2026-09-18 治理瑕疵整改）。禁止手工验证后不留任何产物。
 - **新 job 上线必须声明 consumer**：输出被谁消费（哪个脚本读/进哪条推送/写哪张表）。填不出 consumer 不许上线。
 - **本轮 Census 处置**：intraday-minute 改挂 intraday_cache.py（修复分钟数据断供，*/15→每日4次）；check-drawdown-weekly 停用（被 risk-guard+scorecard 覆盖）；recommendation-pool-weekly 实测已自愈（95只/93.3%，审计证据过时）保留；lhb/sentiment/news 暂保留（P2 合并待周一验收后执行）。
 - **爆炸半径教训**：33 个独立部署单元=33 个"修 A 破 B"风险点。瘦身到 ~20 个的目标在周一验收后继续。
