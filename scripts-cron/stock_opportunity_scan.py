@@ -623,13 +623,15 @@ if __name__ == "__main__":
             })
 
     if not pre_alerts:
+        # P1-3（第五轮审计 2026-09-18）: 无信号改静默——盘中每天 11 轮，
+        # "无信号"推送零信息量（噪音）。排除明细写入 stdout（cron output 可查）。
         lines = [f"【{session_label()} · 无信号】"]
         if rejected:
             lines.append("")
             lines.append(f"⛔ 基本面过滤排除 {len(rejected)} 只：")
             for r in rejected_names[:5]:
                 lines.append(f"  - {r}")
-        send_feishu("\n".join(lines))
+        print("\n".join(lines))  # 只落 stdout，不进群
         sys.exit(0)
 
     # westock 技术指标交叉验证（前5只）

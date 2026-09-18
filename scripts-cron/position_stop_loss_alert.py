@@ -359,15 +359,22 @@ def run_decision():
 
 
 def format_decisions(decisions):
-    """格式化统一 Position Decision（只建议）。"""
+    """格式化统一 Position Decision（只建议）。
+    P1-4 降噪（第五轮审计 2026-09-18）: 无变化 HOLD（Δ≈0 且无触发）折叠为摘要行，
+    群里只保留有行动项（SELL/REDUCE/ADD）或有止损触发的完整条目。"""
     if not decisions:
         return ""
     # Phase 8-K2: URGENT·FINAL 层级标签（决策来自 DecisionEngine，含 decision_id）
     from decision.presentation import LABEL_URGENT, sanitize_user_surface
     lines = [f"{LABEL_URGENT} 📊 **真实持仓统一决策** | {date.today()}", "=" * 55]
+    quiet = []  # 无变化持仓折叠区
     for item in decisions:
         d = item['decision']
         action = d.action
+        no_change = (action == 'HOLD' and abs(d.delta_position) < 0.001 and not item['exit_reasons'])
+        if no_change:
+            quiet.append(f"{d.symbol} {d.name}")
+            continue
         icon = {'HOLD': '🟢', 'SELL': '🔴', 'REDUCE': '🟠', 'ADD': '🟡'}.get(action, '⚪')
         lines.append(f"{icon} {d.symbol} {d.name} → **{action}**")
         lines.append(f"   当前仓位: {d.current_position*100:.1f}% → 目标: {d.target_position*100:.1f}% (Δ{d.delta_position*100:+.1f}%)")
@@ -375,6 +382,8 @@ def format_decisions(decisions):
         if item['exit_reasons']:
             lines.append(f"   触发: {' | '.join(item['exit_reasons'])}")
         lines.append(f"   Decision ID: {d.decision_id}")
+    if quiet:
+        lines.append(f"⚪ 持有不动（无变化/无触发，{len(quiet)} 只）: {', '.join(quiet)}")
     lines.append("=" * 55)
     lines.append("仅建议，不自动交易。请人工在券商确认。")
     text, _removed = sanitize_user_surface('\n'.join(lines))

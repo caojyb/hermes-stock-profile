@@ -905,6 +905,19 @@ try:
 except Exception as _e:
     print(f"[EXC] double_monitor.py: {type(_e).__name__}: {_e}")
     drawdown = None
+# ── P1-1 接线: 读 risk_state 熔断标志（portfolio_risk_guard 写入）──
+# trading_permission 是纯函数，消费方在调用方采集。trading_paused=1 → critical_exit=True
+# → SYSTEM_CRITICAL: 禁新仓/加仓、保留减仓退出。这是熔断器唯一消费点（第五轮审计 2026-09-18）。
+_risk_paused = False
+try:
+    _rs = sim_cur.execute(
+        "SELECT value, updated_at FROM risk_state WHERE key='trading_paused'"
+    ).fetchone()
+    if _rs and str(_rs[0]) == '1':
+        _risk_paused = True
+        print(f"⏸️ 熔断标志生效: risk_state.trading_paused=1 (updated {_rs[1]}) → 今日禁新仓/加仓")
+except Exception as _e:
+    print(f"[EXC] double_monitor.py 读 risk_state: {type(_e).__name__}: {_e}")
 tp_result = tp_evaluate(
     regime_label=ENV_LABEL,
     timing_safe=market_safe,
@@ -913,6 +926,7 @@ tp_result = tp_evaluate(
     drawdown=drawdown, drawdown_limit=0.15,
     position_count=current_count, max_positions=20,
     has_positions=current_count > 0,
+    critical_exit=_risk_paused,
 )
 new_entry_ok = tp_result['permission']['new_entry'] == 'ALLOW'
 print(f"  🚦 交易权限: {tp_result['status']} | 回撤={drawdown if drawdown is None else f'{drawdown:.1%}'} | "
