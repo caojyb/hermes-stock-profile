@@ -77,7 +77,8 @@ def scan_failed_executions(since: datetime) -> list:
 
 
 def scan_missed_runs() -> list:
-    """enabled job 上次运行距今超过 3 天 → 停机缺口嫌疑"""
+    """enabled job 上次运行距今超过 3 天 → 停机缺口嫌疑。
+    2026-09-18: 排除法定节假日（如中秋 9-25 前后不误报）。"""
     findings = []
     if not JOBS_JSON.exists():
         return findings
@@ -86,6 +87,8 @@ def scan_missed_runs() -> list:
     except json.JSONDecodeError:
         return findings
     now = datetime.now()
+    # 只统计"日历交易日"（工作日且非节假日）的静默天数
+    from exchange_holidays import is_trading_calendar_day
     job_list = jobs.get('jobs', jobs) if isinstance(jobs, dict) else jobs
     if isinstance(job_list, dict):
         job_list = list(job_list.values())
@@ -99,11 +102,18 @@ def scan_missed_runs() -> list:
             last_dt = datetime.fromisoformat(last)
             if last_dt.tzinfo is not None:
                 last_dt = last_dt.replace(tzinfo=None)
-            days = (now - last_dt).days
-            if days >= 3:
+            # 数今天回溯到 last 之间有多少个交易日缺口
+            gap_days = 0
+            check = now.date()
+            last_date = last_dt.date()
+            while check > last_date and gap_days <= 5:
+                if is_trading_calendar_day(check):
+                    gap_days += 1
+                check = check.fromordinal(check.toordinal() - 1)
+            if gap_days >= 3:
                 findings.append({'job_id': j.get('job_id', j.get('name', '?')),
                                  'name': j.get('name', ''), 'last_run': last[:10],
-                                 'days_silent': days})
+                                 'days_silent': gap_days})
         except ValueError:
             continue
     return findings

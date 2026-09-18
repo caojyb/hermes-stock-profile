@@ -17,6 +17,11 @@ from stock_db_paths import get_db_path
 from decision.real_portfolio_truth import build_real_snapshot
 from simulation_db_helper import get_active_sim_db
 
+def __connect_db__(path, writer=True):
+    from core.db_connection import connect_db
+    return connect_db(path, writer=writer)
+
+
 MARKET_DB = str(get_db_path('market_cache'))
 SIM_DB = str(get_active_sim_db())
 
@@ -124,7 +129,7 @@ def get_proxy_index_drawdown(conn_sim, market_conn=None):
     2. 若持仓 < 10 只：取全市场市值最小的 200 只有效股票当日涨跌幅的等权平均
     返回: (drawdown, details, source_label)
     """
-    close_mkt = market_conn or sqlite3.connect(MARKET_DB, timeout=60)
+    close_mkt = market_conn or __connect_db__(MARKET_DB)
     close_mkt.row_factory = sqlite3.Row
     cur = conn_sim.execute("""
         SELECT code, buy_price, buy_amount FROM trades

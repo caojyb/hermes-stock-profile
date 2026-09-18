@@ -19,7 +19,18 @@ Authority：
   本模块对"工作日但无当日K线"标记 DATA_NOT_READY，而非 NON_TRADING_DAY。
 """
 from __future__ import annotations
-from datetime import date, datetime
+from datetime import date
+
+# 2026-09-18 二轮审计 P1-4: 节假日表接入（此前 weekday<5 会把法定假日当交易日）
+try:
+    from exchange_holidays import is_holiday, is_trading_calendar_day
+except ImportError:  # 独立部署时兜底：仅 weekday 判断（行为与旧版一致）
+    def is_holiday(d) -> bool:
+        return False
+
+    def is_trading_calendar_day(d=None) -> bool:
+        d = d or date.today()
+        return d.weekday() < 5
 
 # 三个独立状态
 TRADING_DAY_YES = 'YES'
@@ -36,6 +47,12 @@ def is_weekday(d: date) -> bool:
     return d.weekday() < 5
 
 
+def is_calendar_trading_day(d: date | None = None) -> bool:
+    """2026-09-18 新增：日历交易日 = 工作日 且 非法定节假日。
+    推荐调度判定用这个，而非 is_weekday。"""
+    return is_trading_calendar_day(d)
+
+
 def classify_trading_day(d: date | None = None, today_kline_count: int | None = None,
                          latest_kline_date: str | None = None) -> dict:
     """返回交易日/数据就绪/最新K线三态诊断。
@@ -48,8 +65,10 @@ def classify_trading_day(d: date | None = None, today_kline_count: int | None = 
     d = d or date.today()
     today_str = d.isoformat()
 
-    # 1. TRADING_DAY：日历工作日判断（非周末）
-    trading_day = TRADING_DAY_YES if is_weekday(d) else TRADING_DAY_NO
+    # 1. TRADING_DAY：日历工作日 + 法定节假日判断（2026-09-18 接入节假日表）
+    trading_day = TRADING_DAY_YES if is_trading_calendar_day(d) else TRADING_DAY_NO
+    if is_holiday(d):
+        holiday_note = f"（法定节假日休市）"
 
     # 2. MARKET_DATA_READY：当天K线是否已刷新
     if today_kline_count is None:

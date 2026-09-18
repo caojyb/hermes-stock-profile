@@ -115,7 +115,8 @@ def _check_pending_signals_expiry(conn, cur, max_trade_date):
 
 def load_watch_list() -> list[dict]:
     """从 double_up_scores 读取最新一期评分，按总分降序返回监控标的。"""
-    con = sqlite3.connect(MARKET_DB, timeout=60)
+    from core.db_connection import connect_db
+    con = connect_db(MARKET_DB, writer=True)
     con.row_factory = sqlite3.Row
     cur = con.cursor()
     cur.execute("SELECT MAX(scan_date) FROM double_up_scores")
@@ -140,7 +141,8 @@ def load_watch_list() -> list[dict]:
     # 从 simulation.db 补录真实买入价，避免止盈止损死代码
     try:
         sim_db = str(get_db_path('simulation'))
-        sim_con = sqlite3.connect(sim_db, timeout=60)
+        from core.db_connection import connect_db
+        sim_con = connect_db(sim_db, writer=True)
         sim_cur = sim_con.cursor()
         sim_cur.execute("""
             SELECT code, buy_price FROM trades
@@ -163,7 +165,8 @@ date_health_counter: dict[str, dict] = {}
 
 # ── alert_counters 落库持久化（P1-1）：跨 run 保留连续异常计数 ──
 def _alert_conn():
-    return sqlite3.connect(ACTIVE_SIM_DB, timeout=60)
+    from core.db_connection import connect_db
+    return connect_db(ACTIVE_SIM_DB, writer=True)
 
 def _ensure_alert_counters_table():
     conn = _alert_conn()
@@ -283,7 +286,8 @@ except Exception as e:
     print(f'  [PIPELINE] pipeline_status 不可用: {e}')
     PIPELINE_AVAILABLE = False
 
-conn = sqlite3.connect(str(MARKET_DB), timeout=60)  # 60s busy timeout，避免与 market-cache 并发写冲突
+from core.db_connection import connect_db
+conn = connect_db(str(MARKET_DB), writer=True)  # 工厂: WAL+busy_timeout=30s，避免与 market-cache 并发写冲突
 conn.row_factory = sqlite3.Row
 cur = conn.cursor()
 
@@ -515,7 +519,8 @@ for i, stock in enumerate(WATCH_LIST):
     intraday_db = INTRADAY_CACHE_DB
     if os.path.exists(intraday_db):
         try:
-            ic = sqlite3.connect(intraday_db, timeout=60)
+            from core.db_connection import connect_db
+            ic = connect_db(intraday_db, writer=True)
             icc = ic.cursor()
             icc.execute("SELECT signal_type, triggered_at, details FROM signals WHERE code=? AND trade_date=? ORDER BY triggered_at DESC", (code, today_str))
             for row in icc.fetchall():
@@ -642,7 +647,8 @@ print("📋 模拟交易处理")
 print(f"{'='*55}")
 
 # 初始化模拟数据库
-sim_conn = sqlite3.connect(ACTIVE_SIM_DB, timeout=60)
+from core.db_connection import connect_db
+sim_conn = connect_db(ACTIVE_SIM_DB, writer=True)
 sim_cur = sim_conn.cursor()
 print(f"🧪 模拟交易模式: {SIM_MODE}")
 print(f"📂 模拟数据库: {ACTIVE_SIM_DB}")

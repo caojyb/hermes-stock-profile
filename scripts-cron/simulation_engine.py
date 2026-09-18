@@ -28,6 +28,11 @@ SIM_DB = str(get_active_sim_db())
 # P2-2: 模拟仓交易标记策略来源
 from stock_strategy_config import DEFAULT_STRATEGY
 
+def __connect_db__(path, writer=True):
+    from core.db_connection import connect_db
+    return connect_db(path, writer=writer)
+
+
 # ═══ 模拟交易规则 ═══
 TOTAL_CAPITAL = 1_000_000       # 总资金100万
 FIRST_POSITION = 0.025           # 首仓2.5%
@@ -66,7 +71,7 @@ SUSPEND_DAYS = 3                      # 暂缓3个交易日
 
 # ═══ 初始化模拟数据库 ═══
 def init_sim_db():
-    conn = sqlite3.connect(SIM_DB, timeout=60)
+    conn = __connect_db__(SIM_DB)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS trades (
@@ -124,7 +129,7 @@ def migrate_sim_db(conn):
 
 def ensure_sim_fields():
     """确保stocks表有模拟交易相关字段"""
-    conn_sim = sqlite3.connect(SIM_DB, timeout=60)
+    conn_sim = __connect_db__(SIM_DB)
     cur_sim = conn_sim.cursor()
     return conn_sim
 
@@ -518,7 +523,7 @@ def main():
         msg = f"🔴 CRITICAL: 数据库文件不存在! {MARKET_DB}"
         print(f"\n{'='*60}\n{msg}\n{'='*60}", file=sys.stderr)
         raise FileNotFoundError(f"数据库文件不存在: {MARKET_DB}. 所有策略已暂停，请恢复数据库后重试。")
-    conn_mkt = sqlite3.connect(MARKET_DB, timeout=60)
+    conn_mkt = __connect_db__(MARKET_DB)
     cur_mkt = conn_mkt.cursor()
     
     # 获取所有候选股的最新价格和信号

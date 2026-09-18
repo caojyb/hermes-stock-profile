@@ -23,6 +23,7 @@ from pathlib import Path
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "stock-work"))
+# 2026-09-18: sqlite 连接统一走 core.db_connection 工厂 (WAL+busy_timeout)，见函数内 from-import
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "skills/stock/stock-expert"))
 import os
 import json
@@ -43,7 +44,8 @@ WESTOCK_BATCH = '/home/caojy/.hermes/profiles/stock/skills/stock/stock-data-sour
 
 
 def get_latest_klines_date():
-    con = sqlite3.connect(MARKET_DB, timeout=60)
+    from core.db_connection import connect_db
+    con = connect_db(MARKET_DB, writer=True)
     cur = con.cursor()
     cur.execute('SELECT MAX(date) FROM klines')
     latest = cur.fetchone()[0]
@@ -52,7 +54,8 @@ def get_latest_klines_date():
 
 
 def get_stocks() -> List[Tuple[str, str, str]]:
-    con = sqlite3.connect(MARKET_DB, timeout=60)
+    from core.db_connection import connect_db
+    con = connect_db(MARKET_DB, writer=True)
     cur = con.cursor()
     cur.execute('SELECT code, name, market FROM stocks WHERE code NOT LIKE "688%" AND code NOT LIKE "787%"')
     rows = cur.fetchall()
@@ -215,7 +218,8 @@ def ensure_indicator_cols(cur):
 
 def refresh_indicators(latest_date):
     """只更新 indicators 中最新日期落后的股票"""
-    con = sqlite3.connect(MARKET_DB, timeout=60)
+    from core.db_connection import connect_db
+    con = connect_db(MARKET_DB, writer=True)
     cur = con.cursor()
     ensure_indicator_cols(cur)
 
@@ -390,7 +394,8 @@ def refresh_northbound():
     if not north:
         print('  北向资金获取为空')
         return 0
-    con = sqlite3.connect(MARKET_DB, timeout=60)
+    from core.db_connection import connect_db
+    con = connect_db(MARKET_DB, writer=True)
     cur = con.cursor()
     ensure_indicator_cols(cur)
     updated = 0
@@ -420,7 +425,8 @@ def refresh_main_fund_flow(date_str):
     print('刷新主力资金...')
     rows = fetch_main_fund_rank(date_str)
     if rows:
-        con = sqlite3.connect(MARKET_DB, timeout=60)
+        from core.db_connection import connect_db
+        con = connect_db(MARKET_DB, writer=True)
         cur = con.cursor()
         cur.execute('''
             CREATE TABLE IF NOT EXISTS main_fund_flow (
@@ -441,7 +447,9 @@ def refresh_main_fund_flow(date_str):
     if westock_count:
         print(f'主力资金 westock 补写 {westock_count} 条')
 
-    con = sqlite3.connect(MARKET_DB, timeout=60)
+    from core.db_connection import connect_db
+
+    con = connect_db(MARKET_DB, writer=True)
     cur = con.cursor()
     cur.execute('SELECT COUNT(*) FROM main_fund_flow WHERE date=?', (date_str,))
     count = cur.fetchone()[0]
@@ -456,7 +464,8 @@ def _westock_client():
 
 
 def _market_prefix(code: str) -> str:
-    con = sqlite3.connect(MARKET_DB, timeout=60)
+    from core.db_connection import connect_db
+    con = connect_db(MARKET_DB, writer=True)
     cur = con.cursor()
     cur.execute('SELECT market FROM stocks WHERE code=? ORDER BY ROWID DESC LIMIT 1', (code,))
     row = cur.fetchone()
@@ -476,7 +485,9 @@ def _refresh_westock_main_fund_flow(date_str: str, batch_size: int = 10) -> int:
         print(f'  westock data_client 加载失败: {e}')
         return 0
 
-    con = sqlite3.connect(MARKET_DB, timeout=60)
+    from core.db_connection import connect_db
+
+    con = connect_db(MARKET_DB, writer=True)
     cur = con.cursor()
     cur.execute('''
         CREATE TABLE IF NOT EXISTS main_fund_flow (
@@ -500,7 +511,8 @@ def _refresh_westock_main_fund_flow(date_str: str, batch_size: int = 10) -> int:
         r = client.westock_asfund(code_str, date=date_str)
         if not r.get('success') or not isinstance(r.get('parsed'), list):
             continue
-        con = sqlite3.connect(MARKET_DB, timeout=60)
+        from core.db_connection import connect_db
+        con = connect_db(MARKET_DB, writer=True)
         cur = con.cursor()
         for row in r['parsed']:
             code = row.get('SecuCode') or row.get('code') or ''
@@ -540,7 +552,9 @@ def refresh_lhb(date_str):
     if westock_count:
         print(f'龙虎榜 westock 补写 {westock_count} 条')
 
-    con = sqlite3.connect(LHB_DB, timeout=60)
+    from core.db_connection import connect_db
+
+    con = connect_db(LHB_DB, writer=True)
     cur = con.cursor()
     cur.execute('SELECT COUNT(*) FROM lhb_data WHERE trade_date=?', (date_str,))
     count = cur.fetchone()[0]
@@ -553,7 +567,8 @@ def _refresh_eastmoney_lhb(date_str: str) -> int:
     rows = fetch_lhb(date_str)
     if not rows:
         return 0
-    con = sqlite3.connect(LHB_DB, timeout=60)
+    from core.db_connection import connect_db
+    con = connect_db(LHB_DB, writer=True)
     cur = con.cursor()
     cur.execute('''
         CREATE TABLE IF NOT EXISTS lhb_data (
@@ -603,7 +618,9 @@ def _refresh_westock_lhb(date_str: str, batch_size: int = 10) -> int:
         print(f'  westock data_client 加载失败: {e}')
         return 0
 
-    con = sqlite3.connect(MARKET_DB, timeout=60)
+    from core.db_connection import connect_db
+
+    con = connect_db(MARKET_DB, writer=True)
     cur = con.cursor()
     cur.execute('SELECT code FROM stocks WHERE code NOT LIKE "688%" AND code NOT LIKE "787%" ORDER BY code LIMIT 50')
     rows = cur.fetchall()
@@ -612,7 +629,9 @@ def _refresh_westock_lhb(date_str: str, batch_size: int = 10) -> int:
     if not codes:
         return 0
 
-    con = sqlite3.connect(LHB_DB, timeout=60)
+    from core.db_connection import connect_db
+
+    con = connect_db(LHB_DB, writer=True)
     cur = con.cursor()
     cur.execute('''
         CREATE TABLE IF NOT EXISTS lhb_data (
