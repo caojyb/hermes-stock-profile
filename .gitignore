@@ -45,3 +45,9 @@ docs/architecture/*.json
 
 # === Runtime state (heartbeats / counters / caches) ===
 data/state/
+
+# === Local secrets / credentials (2026-09-18 P0-2) ===
+_local_constants.override.json
+**/_local_constants.override.json
+.env
+**/.env

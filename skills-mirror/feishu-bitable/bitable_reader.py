@@ -7,6 +7,7 @@ import json
 import os
 import urllib.request
 from dataclasses import dataclass, asdict
+from pathlib import Path  # 2026-09-18 P0-2 修复: Path 此前未导入, _get_bitable_config 内 NameError 被 except 吞掉
 from typing import List, Optional
 
 
@@ -57,14 +58,29 @@ def _get_tenant_token() -> str:
 
 
 def _get_bitable_config():
-    """获取 Bitable app_token 和 table_id"""
+    """获取 Bitable app_token 和 table_id。
+    安全（2026-09-18 P0-2）: 凭证不进代码 default（仓库 public）。
+    顺序: decision/_local_constants（含 override.json）→ 环境变量 → 报错。"""
+    app_token = table_id = ""
     try:
-        import decision._local_constants as _local_constants
-        app_token = _local_constants.BITABLE_BASE_TOKEN
-        table_id = _local_constants.BITABLE_TABLE_ID
+        import sys as _sys
+        _cur = Path(__file__).resolve()
+        for _p in _cur.parents:
+            _dec = _p / 'scripts' / 'cron' / 'decision'
+            if _dec.is_dir():
+                # decision 包的导入根是它的父目录 scripts/cron
+                _pkg_root = str(_dec.parent)
+                if _pkg_root not in _sys.path:
+                    _sys.path.insert(0, _pkg_root)
+                import decision._local_constants as _local_constants
+                app_token = _local_constants.BITABLE_BASE_TOKEN
+                table_id = _local_constants.BITABLE_TABLE_ID
+                break
     except Exception:
-        app_token = os.getenv("BITABLE_BASE_TOKEN", "REDACTED-TOKEN")
-        table_id = os.getenv("BITABLE_TABLE_ID", "REDACTED-TABLE")
+        pass
+    if not app_token or not table_id:
+        app_token = app_token or os.getenv("BITABLE_BASE_TOKEN", "")
+        table_id = table_id or os.getenv("BITABLE_TABLE_ID", "")
     if not app_token or not table_id:
         raise RuntimeError("Bitable app_token/table_id 为空，请检查 _local_constants 或环境变量")
     return app_token, table_id

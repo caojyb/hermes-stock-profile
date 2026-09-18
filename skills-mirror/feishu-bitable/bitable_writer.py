@@ -8,9 +8,29 @@ import urllib.request
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-APP_TOKEN = "REDACTED-TOKEN"
-TABLE_ID = "REDACTED-TABLE"
-ENV_PATH = Path.home() / ".hermes" / ".env"
+# 安全（2026-09-18 二轮审计 P0-2）: 凭证不进代码——从 decision/_local_constants（gitignored）或环境变量取
+import os as _os
+def _load_bitable_target():
+    """安全（2026-09-18 P0-2）: 凭证不进代码 default。向上遍历父目录定位
+    scripts/cron/decision/_local_constants（gitignored），找不到再退环境变量。"""
+    try:
+        import sys as _sys
+        _cur = Path(__file__).resolve()
+        for _p in _cur.parents:
+            _dec = _p / 'scripts' / 'cron' / 'decision'
+            if _dec.is_dir():
+                # decision 包的导入根是它的父目录 scripts/cron
+                _pkg_root = str(_dec.parent)
+                if _pkg_root not in _sys.path:
+                    _sys.path.insert(0, _pkg_root)
+                import decision._local_constants as _lc
+                return _lc.BITABLE_BASE_TOKEN, _lc.BITABLE_TABLE_ID
+    except Exception:
+        pass
+    return _os.getenv("BITABLE_BASE_TOKEN", ""), _os.getenv("BITABLE_TABLE_ID", "")
+
+APP_TOKEN, TABLE_ID = _load_bitable_target()
+ENV_PATH = Path.home() / ".hermes" / "profiles" / "stock" / ".env"
 
 
 def _get_token() -> str:
