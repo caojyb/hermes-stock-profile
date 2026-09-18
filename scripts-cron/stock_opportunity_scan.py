@@ -634,6 +634,22 @@ if __name__ == "__main__":
         print("\n".join(lines))  # 只落 stdout，不进群
         sys.exit(0)
 
+    # ── 深析关（第五轮审计⑥）: 推送前四项核查——ST/解禁 veto 拦截，龙虎榜/减持 flag 上墙 ──
+    try:
+        from deep_screen_gate import gate_batch
+        pre_alerts, deep_rejected = gate_batch(pre_alerts)
+        for dr in deep_rejected:
+            print(f"⛔ 深析关拦截 {dr['code']} {dr['name']}: {'; '.join(dr['veto'])}")
+        if not pre_alerts:
+            print("【无信号】全部候选被深析关拦截")
+            sys.exit(0)
+        # flags 并入每个候选的 warnings（推送显示 ⚠️）
+        for a in pre_alerts:
+            if a.get('deep_flags'):
+                a.setdefault('warnings', []).extend(a['deep_flags'])
+    except Exception as _dg_e:
+        print(f"[EXC] stock_opportunity_scan.py 深析关: {type(_dg_e).__name__}: {_dg_e}（放行，不阻塞推送）")
+
     # westock 技术指标交叉验证（前5只）
     top_codes = [a["code"] for a in pre_alerts[:5]]
     westock_map = fetch_westock_technical(top_codes)
@@ -666,8 +682,14 @@ if __name__ == "__main__":
         else:
             new_alerts.append(a)
 
-    # 发飞书
-    lines = [f"【{session_label()} · {datetime.now().strftime('%H:%M')}】"]
+    # 发飞书（P1-4 三级标签: 有持仓信号=[行动]，仅新候选=[关注]）
+    stamp = datetime.now().strftime('%H:%M')
+    if holding_alerts:
+        lines = [f"【[行动] {session_label()} · {stamp}】"]
+    elif new_alerts:
+        lines = [f"【[关注] {session_label()} · {stamp}】"]
+    else:
+        lines = [f"【{session_label()} · {stamp}】"]
     if holding_alerts:
         lines.append("=== 持仓内信号 ===")
         for a in sorted(holding_alerts, key=lambda x: x["confidence"], reverse=True)[:8]:
