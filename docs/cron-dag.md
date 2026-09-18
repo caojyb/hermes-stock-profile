@@ -2,14 +2,14 @@
 
 ## 概述
 
-股票系统 Cron 任务调度图。当前共 **27 个 job**，按触发时机分为日间链和周链。
+股票系统 Cron 任务调度图。当前共 **31 个 job**，按触发时机分为日间链和周链。
 
 ## 日间链（交易日）
 
 | 时间 | Job | 脚本 | 职责 | 飞书推送 | 状态 |
 |------|-----|------|------|----------|------|
 | 08:05 | `cron-health-sentinel` | `cron_health_sentinel.py` | cron 健康哨兵（WARN 静默失败/停机缺口/failed）+ crash 日志轮转 | 异常时✅ | 2026-09-18 新增 |
-| 08:15 | `overnight-risk-scan` | `overnight_risk_scan.py` | 持仓+关注池隔夜风险扫描（业绩预告/利空新闻/停牌，命中才推） | 命中✅ | 2026-09-18 新增（五轮审计①） |
+| 07:50 | `overnight-risk-scan` | `overnight_risk_scan.py` | 持仓+关注池隔夜风险扫描（业绩预告/利空新闻/停牌，命中才推） | 命中✅ | 2026-09-18 新增（五轮审计①） |
 | 08:25 | `mirror-drift-check` | `mirror_drift_check.sh` | 生产↔git 镜像漂移检测 | 漂移时✅ | 2026-09-18 新增 |
 | 08:30 | `lint-db-paths` | `lint_no_hardcoded_db.sh` | 硬编码 DB 路径检查 | 失败时✅ | 活跃 |
 | 09:35 | `position-stop-loss-alert` | `position_stop_loss_alert.py` | 真实持仓统一决策（止损/仓位建议，质量守卫硬失败） | 非HOLD✅ | 活跃 |
@@ -26,6 +26,7 @@
 | 17:10 | `deep-position-review` | (agent) | 持仓深度综合诊断 | ✅ | 2026-09-18 从16:50挪出避让 |
 | 17:30 | `track-outcomes-daily` | `track_outcomes.py` | 推荐结果 outcome 回写 | 异常✅ | 2026-09-18 限交易日 |
 | 17:50 | `check-market-cache-health` | `check_market_cache_health.py` | 数据库健康检查 | 异常✅ | 2026-09-18 限交易日 |
+| 17:55 | `table-freshness-check` | `table_freshness_check.py` | 关键表新鲜度（klines/lhb/解禁/减持滞后告警） | 异常✅ | 2026-09-18 新增（六轮） |
 
 ## 周链（周日）
 
