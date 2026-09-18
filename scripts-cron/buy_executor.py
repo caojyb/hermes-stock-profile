@@ -14,7 +14,7 @@ def execute_buy_with_signals(
     code, name, sector,
     buy_price, buy_shares, buy_amount,
     signal_types, strategy, decision_id,
-    today_str,
+    today_str, signal_price=None,
 ):
     """
     在 buy 循环内调用，处理单只股票的 signals + trades 写入。
@@ -92,14 +92,19 @@ def execute_buy_with_signals(
             sim_conn.commit()
             return False, f"已有活跃持仓，忽略 {code} {name}"
 
-        # Step 3: 执行买入
+        # Step 3: 执行买入（六轮 P2 三价对账: signal_price 记信号价, buy_price 记成交基准价;
+        #   signal_price 列由 ensure 列逻辑动态添加——旧库无此列时跳过记录不阻塞）
+        try:
+            sim_cur.execute("SELECT signal_price FROM trades LIMIT 0")
+        except Exception:
+            sim_cur.execute("ALTER TABLE trades ADD COLUMN signal_price REAL")
         sim_cur.execute(
             """
             INSERT INTO trades
             (code, name, sector, buy_date, buy_price, buy_shares,
              buy_amount, status, signal_type, hold_mode, strategy,
-             decision_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, '持有', ?, 'normal', ?, ?, ?)
+             decision_id, created_at, signal_price)
+            VALUES (?, ?, ?, ?, ?, ?, ?, '持有', ?, 'normal', ?, ?, ?, ?)
             """,
             (
                 code,
@@ -113,6 +118,7 @@ def execute_buy_with_signals(
                 strategy,
                 decision_id,
                 today_str,
+                float(signal_price) if signal_price else None,
             ),
         )
         trade_id = sim_cur.lastrowid

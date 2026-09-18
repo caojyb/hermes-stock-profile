@@ -1051,12 +1051,16 @@ if new_entry_ok and current_count < 20 and IS_TRADING_DAY:
             continue
         print(f"[BRANCH] BUY_EXEC code={code} name={name} shares={shares} amount={buy_amount:.0f} decision_id={dec.decision_id}")
 
+        # 六轮 P2: 三价对账——dec.reference_price(信号价) / entry_price(成交基准=最新收盘) / 当日均价缺失用 close
+        # 写入 signal_price 供周报算 implementation shortfall（买侧 0 滑点 vs 卖侧 5% 的不对称监控）
+        _signal_price = getattr(dec, 'reference_price', None) or getattr(dec, 'signal_price', None)
+
         ok, msg = execute_buy_with_signals(
             sim_conn, sim_cur,
             code, name, stock.get('sector', ''),
             entry_price, shares, buy_amount,
             stock.get('signal_types', []), DEFAULT_STRATEGY, dec.decision_id,
-            today_str
+            today_str, signal_price=_signal_price
         )
         if not ok:
             print(f"  ⚠️ {msg}")

@@ -111,6 +111,8 @@ def aggregate():
     
     # 插入或更新 strategy_performance
     now = datetime.now().isoformat()
+    # 去重: 自增 id 让 INSERT OR REPLACE 永远新增（六轮审计发现 19 行重复）
+    cur.execute("DELETE FROM strategy_performance WHERE strategy='all' AND period='all'")
     cur.execute("""
         INSERT OR REPLACE INTO strategy_performance (
             strategy, period, calc_date,
@@ -161,6 +163,10 @@ def aggregate():
                 continue
             # 逐 horizon 统计（与上方 all 档相同口径）
             t_stats = {}
+            # 六轮审计 P1: complete_recs 口径必须与 'all' 行一致（status='complete'），
+            # 不能拿 total 冒充（虚高胜率）
+            cur.execute("SELECT COUNT(*) FROM tier_outcome WHERE status='complete'")
+            t_complete = cur.fetchone()[0]
             for horizon in ['t1', 't5', 't20']:
                 filled_col = f"{horizon}_filled"
                 return_col = f"{horizon}_return"
@@ -211,7 +217,7 @@ def aggregate():
                 ) VALUES (?, 'all', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 tier, now,
-                t_total, t_total, 0,
+                t_total, t_complete, 0,
                 t_stats['t1']['filled'],
                 0,  # fully_filled_recs 按 tier 暂不细分
                 t_win_rate('t1'), t_win_rate('t5'), t_win_rate('t20'),

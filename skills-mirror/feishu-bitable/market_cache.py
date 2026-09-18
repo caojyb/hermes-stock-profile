@@ -23,7 +23,14 @@ for _key in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY',
              'all_proxy', 'ALL_PROXY']:
     os.environ.pop(_key, None)
 import akshare as ak
-from data_validation import validate_kline  # 2026-09-18 P1-5: K线入库校验
+# 2026-09-18 P1-5: K线入库校验（data_validation.py 在 scripts/cron/，skill 目录 sys.path 够不到——
+# 六轮 P0 回归修复: 显式注入，不再依赖调用方 cwd）
+import sys as _sys
+from pathlib import Path as _Path
+_scripts_cron = str(_Path(__file__).resolve().parents[5] / 'scripts' / 'cron')
+if _scripts_cron not in _sys.path:
+    _sys.path.insert(0, _scripts_cron)
+from data_validation import validate_kline
 import pandas as pd
 from pathlib import Path
 from datetime import date, datetime, timedelta, timezone

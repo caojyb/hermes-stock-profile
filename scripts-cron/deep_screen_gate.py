@@ -116,20 +116,38 @@ def check_holder_reduce(code, days=30):
 
 
 def gate(code, name=''):
-    """四项核查主入口。返回 {pass, veto, flags}"""
+    """四项核查主入口。返回 {pass, veto, flags, coverage}
+    P1（六轮审计）: 数据覆盖率标注——数据缺失≠通过（fail-loud）。
+    coverage: 每项检查的数据可用性说明，调用方应展示给用户。"""
     veto, flags = [], []
+    coverage = []
     if check_st_risk(code, name):
         veto.append(f'ST/退市风险: {name or code}')
+    else:
+        coverage.append('ST核查: stocks表名称标记（被动识别，非官方风险警示列表）')
     lk = check_lockup_near(code)
     if lk and lk[0] == 'veto':
         veto.append(f'限售解禁: {lk[1]}')
     elif lk:
         flags.append(f'解禁临近: {lk[1]}')
+    try:
+        mdb, _ = _dbs()
+        conn = sqlite3.connect(mdb, timeout=30)
+        lk_rows = conn.execute(
+            "SELECT COUNT(*) FROM lockup_release WHERE release_date >= ?",
+            (date.today().isoformat(),)).fetchone()[0]
+        conn.close()
+        coverage.append(f'解禁核查: lockup_release 未来数据 {lk_rows} 行'
+                        + ('' if lk_rows > 0 else '（⚠️ 空表——本周刷新未跑，解禁检查未生效）'))
+    except Exception:
+        coverage.append('解禁核查: 数据不可用')
     if check_lhb_recent(code):
         flags.append('近5日龙虎榜上榜（游资炒作警示）')
     if check_holder_reduce(code):
         flags.append('近30日股东减持')
-    return {'pass': len(veto) == 0, 'veto': veto, 'flags': flags}
+    # 减持检查覆盖说明: holder_change 主要覆盖持仓股（westock 写入），对候选股基本盲
+    coverage.append('减持核查: holder_change 仅覆盖持仓股，候选股不覆盖（已知盲区）')
+    return {'pass': len(veto) == 0, 'veto': veto, 'flags': flags, 'coverage': coverage}
 
 
 def gate_batch(candidates):
