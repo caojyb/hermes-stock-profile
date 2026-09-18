@@ -219,16 +219,31 @@ def update_pool_prices():
         if not current_price:
             continue
         
+        # 手工验证留痕修复(2026-09-18): 原实现整列重写 notes，抹掉推送链写入的元数据
+        # （source=intraday_scan/score 等），导致下游同源 SQL 失效。改为追加式保留。
+        # 注意: 必须在空值防护分支之前定义（防护分支也要拼接）。
+        _orig_notes = str(row_notes or '')
+        
         # 计算盈亏
         days_held = (date.today() - date.fromisoformat(entry_date)).days
         pnl_pct = (current_price - entry_price) / entry_price * 100
         
+        # 空值防护(2026-09-18 排查): stop_loss/take_profit_* 为 NULL 时跳过状态判定，
+        # 只更新价格——避免 TypeError 崩掉整个 update 循环
+        if not stop_loss or not tp1 or not tp2:
+            cur.execute("""
+                UPDATE recommendations SET
+                    current_price = ?, days_held = ?, pnl_pct = ?,
+                    status = 'active', notes = ?, updated_at = ?
+                WHERE id = ?
+            """, (current_price, days_held, pnl_pct,
+                   (f' | {_orig_notes}' if _orig_notes else ''), now_str, id_))
+            updated += 1
+            continue
+        
         # 判断状态
         status = 'active'
         notes = ''
-        # 手工验证留痕修复(2026-09-18): 原实现整列重写 notes，抹掉推送链写入的元数据
-        # （source=intraday_scan/score 等），导致下游同源 SQL 失效。改为追加式保留。
-        _orig_notes = str(row_notes or '')
         
         if current_price <= stop_loss:
             status = 'hit_stop_loss'
