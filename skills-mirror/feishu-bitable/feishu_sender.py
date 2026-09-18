@@ -8,7 +8,7 @@ from typing import Optional
 from pathlib import Path
 
 
-FEISHU_CHAT_ID = "REDACTED-CHAT"  # 推送目标会话ID
+FEISHU_CHAT_ID = "oc_88d1817efbb9f328f4376314ab7c8b05"  # 推送目标会话ID
 ENV_PATH = Path.home() / ".hermes" / "profiles" / "stock" / ".env"
 
 
