@@ -67,7 +67,8 @@ def ensure_tables():
     for col in ['ps_ttm', 'pcf_ttm']:
         try:
             cur.execute(f"ALTER TABLE indicators ADD COLUMN {col} REAL")
-        except:
+        except Exception as _e:
+            print(f"[EXC] data_upgrade.py: {type(_e).__name__}: {_e}")
             pass
     
     conn.commit()
@@ -87,7 +88,8 @@ def fetch_main_fund_flow(code):
                 flow_data = json.loads(flow_data)
             if isinstance(flow_data, list):
                 return flow_data
-    except:
+    except Exception as _e:
+        print(f"[EXC] data_upgrade.py: {type(_e).__name__}: {_e}")
         pass
     return []
 
@@ -190,7 +192,8 @@ def load_sector_ratings():
     try:
         with open(SECTOR_RATING_FILE) as f:
             return json.load(f)
-    except:
+    except Exception as _e:
+        print(f"[EXC] data_upgrade.py: {type(_e).__name__}: {_e}")
         return {}
 
 def get_sector_rating(sector_name, ratings):
@@ -225,7 +228,8 @@ def estimate_ps_pcf(code, price):
                 mcap = ts[0] * price
                 ps = mcap / f183 if f183 > 0 else None
                 return ps, None  # PCF无法从API获得
-    except:
+    except Exception as _e:
+        print(f"[EXC] data_upgrade.py: {type(_e).__name__}: {_e}")
         pass
     return None, None
 
@@ -258,7 +262,8 @@ def update_valuation(codes):
                             cur.execute("UPDATE indicators SET ps_ttm=? WHERE code=?", (ps, code))
                             updated += 1
             time.sleep(0.1)
-        except:
+        except Exception as _e:
+            print(f"[EXC] data_upgrade.py: {type(_e).__name__}: {_e}")
             pass
     
     conn.commit()

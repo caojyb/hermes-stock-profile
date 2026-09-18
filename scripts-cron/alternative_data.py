@@ -109,7 +109,8 @@ def fetch_news_sentiment(codes, days=3):
                 pub_dt = datetime.strptime(pub_time, "%Y-%m-%d %H:%M:%S")
                 if pub_dt < cutoff:
                     continue
-            except:
+            except Exception as _e:
+                print(f"[EXC] alternative_data.py: {type(_e).__name__}: {_e}")
                 continue
 
             title = str(row.get("标题", ""))

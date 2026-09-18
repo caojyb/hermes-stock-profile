@@ -123,7 +123,8 @@ def create_strategy_doubling_v2(price_pos_max=40, vol_ratio_min=1.3, atr_pct_min
                     score += 10
 
                 scored.append((code, score))
-            except Exception:
+            except Exception as _e:
+                print(f"[EXC] backtest_liquidity.py: {type(_e).__name__}: {_e}")
                 continue
         conn.close()
 

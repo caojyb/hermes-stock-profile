@@ -104,7 +104,8 @@ def extract_score_upgrade(text):
         if s.startswith('总分:'):
             try:
                 data['total'] = float(s.split(':')[1].split('/')[0].strip())
-            except:
+            except Exception as _e:
+                print(f"[EXC] l4_1_signal_conflict.py: {type(_e).__name__}: {_e}")
                 pass
         elif s.startswith('等级:'):
             data['level'] = s.split(':',1)[1].strip()
@@ -113,22 +114,26 @@ def extract_score_upgrade(text):
         elif s.startswith('  🧬 翻倍基因'):
             try:
                 data['doubling_gene'] = float(s.split(':')[1].split('/')[0].strip())
-            except:
+            except Exception as _e:
+                print(f"[EXC] l4_1_signal_conflict.py: {type(_e).__name__}: {_e}")
                 pass
         elif s.startswith('  【基本面'):
             try:
                 data['fundamental'] = float(s.split('(')[1].split('/')[0].strip())
-            except:
+            except Exception as _e:
+                print(f"[EXC] l4_1_signal_conflict.py: {type(_e).__name__}: {_e}")
                 pass
         elif s.startswith('  估值 ') and '/' in s:
             try:
                 data['valuation'] = float(s.split('|')[0].split(' ')[1].split('/')[0].strip())
-            except:
+            except Exception as _e:
+                print(f"[EXC] l4_1_signal_conflict.py: {type(_e).__name__}: {_e}")
                 pass
         elif s.startswith('  技术 ') and '/' in s:
             try:
                 data['technical'] = float(s.split('|')[0].split(' ')[1].split('/')[0].strip())
-            except:
+            except Exception as _e:
+                print(f"[EXC] l4_1_signal_conflict.py: {type(_e).__name__}: {_e}")
                 pass
         elif s.startswith('  🚩 '):
             data['risk'].append(s.split('🚩',1)[1].strip())

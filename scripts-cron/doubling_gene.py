@@ -59,7 +59,8 @@ def find_doubling_stocks():
                           datetime.strptime(first_date, "%Y-%m-%d")).days
             if days_listed < 365:
                 continue
-        except:
+        except Exception as _e:
+            print(f"[EXC] doubling_gene.py: {type(_e).__name__}: {_e}")
             continue
 
         # 计算滚动120日涨幅
@@ -133,7 +134,8 @@ def analyze_common_traits(doubling_stocks):
         try:
             dt = datetime.strptime(start_date, "%Y-%m-%d")
             pre_date = (dt - timedelta(days=90)).strftime("%Y-%m-%d")
-        except:
+        except Exception as _e:
+            print(f"[EXC] doubling_gene.py: {type(_e).__name__}: {_e}")
             continue
 
         # 市值
@@ -206,7 +208,8 @@ def analyze_common_traits(doubling_stocks):
                     if cur_p and hi2y > lo2y:
                         pct = (cur_p - lo2y) / (hi2y - lo2y) * 100
                         traits.setdefault("price_2y_pct", []).append(pct)
-        except Exception:
+        except Exception as _e:
+            print(f"[EXC] doubling_gene.py: {type(_e).__name__}: {_e}")
             pass
 
         # PE正负：pe_ttm
@@ -251,7 +254,8 @@ def analyze_common_traits(doubling_stocks):
                     avg20 = sum(pre20) / len(pre20)
                     has_vol = any(r[1] is not None and avg20 > 0 and r[1] > avg20 * 3 for r in recent30)
                     traits.setdefault("vol_break_30d", []).append(1 if has_vol else 0)
-        except Exception:
+        except Exception as _e:
+            print(f"[EXC] doubling_gene.py: {type(_e).__name__}: {_e}")
             pass
 
         # 启动前60天另类数据/研报/机构调研
@@ -263,7 +267,8 @@ def analyze_common_traits(doubling_stocks):
             """, [code, pre_date, info.get("start_date", pre_date)])
             alt_cnt = c.fetchone()[0]
             traits.setdefault("alt_60d", []).append(1 if alt_cnt > 0 else 0)
-        except Exception:
+        except Exception as _e:
+            print(f"[EXC] doubling_gene.py: {type(_e).__name__}: {_e}")
             pass
 
         # ROE

@@ -105,7 +105,8 @@ def check_liquidity_accurate(code, min_daily_amt=30000000):
         f48 = d.get('f48')  # 今日成交额
         if f48 and f48 > 0:
             return True, f48, f"今日成交额{f48/1e4:.0f}万"
-    except:
+    except Exception as _e:
+        print(f"[EXC] data_filters.py: {type(_e).__name__}: {_e}")
         pass
     return check_liquidity(code, min_daily_amt)  # 降级到估算
 
@@ -136,7 +137,8 @@ def check_market_timing():
                     return False, close, ma20, f"沪深300{close:.0f} < MA20{ma20:.0f}，大盘弱势，暂停买入"
                 else:
                     return True, close, ma20, f"沪深300{close:.0f} > MA20{ma20:.0f}，大盘正常"
-    except:
+    except Exception as _e:
+        print(f"[EXC] data_filters.py: {type(_e).__name__}: {_e}")
         pass
     
     # 降级：从数据库获取
@@ -153,7 +155,8 @@ def check_market_timing():
                 return False, close, ma20, f"沪深300{close:.0f} < MA20{ma20:.0f}，大盘弱势，暂停买入"
             else:
                 return True, close, ma20, f"沪深300{close:.0f} > MA20{ma20:.0f}，大盘正常"
-    except:
+    except Exception as _e:
+        print(f"[EXC] data_filters.py: {type(_e).__name__}: {_e}")
         pass
     
     # Phase 1 fail-safe: 无法获取沪深300数据时，为安全暂停买入（不再默认放行）
@@ -249,7 +252,8 @@ def save_performance_log(alerts):
         try:
             with open(PERFORMANCE_LOG) as f:
                 history = json.load(f)
-        except:
+        except Exception as _e:
+            print(f"[EXC] data_filters.py: {type(_e).__name__}: {_e}")
             pass
     history.append({
         'date': date.today().isoformat(),
@@ -291,7 +295,8 @@ def check_ashare_risks(code, name='', buy_price=0.0):
                 trading_days = len(klines)
                 if trading_days < 60:
                     flags.append(f'次新股(上市{trading_days}天)')
-            except Exception:
+            except Exception as _e:
+                print(f"[EXC] data_filters.py: {type(_e).__name__}: {_e}")
                 pass
 
         # 近 5 日是否有成交 / 停牌
@@ -312,7 +317,8 @@ def check_ashare_risks(code, name='', buy_price=0.0):
                     flags.append('接近跌停')
 
         conn.close()
-    except Exception:
+    except Exception as _e:
+        print(f"[EXC] data_filters.py: {type(_e).__name__}: {_e}")
         pass
 
     return len(flags) == 0, flags

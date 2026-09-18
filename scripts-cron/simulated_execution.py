@@ -321,7 +321,8 @@ def save_to_simulation_db(records):
                 r["fill_quantity"],
                 r["fill_price"] * r["fill_quantity"],
             ))
-        except:
+        except Exception as _e:
+            print(f"[EXC] simulated_execution.py: {type(_e).__name__}: {_e}")
             pass
 
     conn.commit()

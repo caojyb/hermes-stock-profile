@@ -108,7 +108,8 @@ def fetch_news_via_api():
                             'matched_codes': [code],
                             'matched_names': [pool_map.get(code, '')],
                         })
-        except:
+        except Exception as _e:
+            print(f"[EXC] news_sentiment.py: {type(_e).__name__}: {_e}")
             continue
     
     return all_news
@@ -269,7 +270,8 @@ def classify_sentiment(code, news_title, news_content, use_ai=True):
             sentiment, confidence, summary, reason = classify_with_ai(code, news_title, news_content)
             if confidence >= 0.7:
                 return (sentiment, f'{summary} | 置信度{confidence:.0%}| {reason}')
-        except:
+        except Exception as _e:
+            print(f"[EXC] news_sentiment.py: {type(_e).__name__}: {_e}")
             pass
     
     # AI不可用或置信度低，回退关键词
@@ -287,14 +289,16 @@ def save_sentiment(conn, code, name, news_item, sentiment, reason, trade_date):
               news_item.get('time', ''), sentiment, reason, trade_date))
         conn.commit()
         return True
-    except:
+    except Exception as _e:
+        print(f"[EXC] news_sentiment.py: {type(_e).__name__}: {_e}")
         return False
 
 def get_pool_names():
     """获取候选池代码和名称映射（统一从 double_up_scores 表读取）"""
     try:
         return {s['code']: s['name'] for s in pool_loader.load_pool()}
-    except:
+    except Exception as _e:
+        print(f"[EXC] news_sentiment.py: {type(_e).__name__}: {_e}")
         return {}
 
 def run(news_markdown=None):
@@ -398,7 +402,8 @@ def run(news_markdown=None):
         from pipeline_status import record_status
         record_status('stock-news-sentiment-pilot', 'ok', date.today().isoformat(),
                       row_count=len(results), message=f'{len(results)} 条舆情')
-    except Exception:
+    except Exception as _e:
+        print(f"[EXC] news_sentiment.py: {type(_e).__name__}: {_e}")
         pass
     return results
 

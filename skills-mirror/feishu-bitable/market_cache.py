@@ -23,6 +23,7 @@ for _key in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY',
              'all_proxy', 'ALL_PROXY']:
     os.environ.pop(_key, None)
 import akshare as ak
+from data_validation import validate_kline  # 2026-09-18 P1-5: K线入库校验
 import pandas as pd
 from pathlib import Path
 from datetime import date, datetime, timedelta, timezone
@@ -803,6 +804,10 @@ def _backfill_single_date(conn, target_date: str):
                 continue
             k = matched[0]
             try:
+                _ok, _reason = validate_kline(code, target_date, k.get("open"), k.get("close"), k.get("high"), k.get("low"), k.get("volume", 0), k.get("change_pct"))
+                if not _ok:
+                    print(f"[DATAVAL-REJECT] {code} {target_date}: {_reason} — 拒绝入库")
+                    continue
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO klines (code, date, open, close, high, low, volume, turnover, amplitude, change_pct)
@@ -920,6 +925,10 @@ def full_refresh():
             else:
                 change_pct = 0
             
+            _ok, _reason = validate_kline(code, k['date'], k['open'], k['close'], k['high'], k['low'], k['volume'], change_pct)
+            if not _ok:
+                print(f"[DATAVAL-REJECT] {code} {k['date']}: {_reason} — 拒绝入库")
+                continue
             conn.execute("""
                 INSERT OR REPLACE INTO klines (code, date, open, close, high, low, volume, turnover, amplitude, change_pct)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1158,6 +1167,10 @@ def incremental_update(focus_codes: list = None, dry_run: bool = False):
                     change_pct = (k['close'] - prev_close) / prev_close * 100 if prev_close else 0
                 else:
                     change_pct = 0
+                _ok, _reason = validate_kline(code, k['date'], k['open'], k['close'], k['high'], k['low'], k['volume'], change_pct)
+                if not _ok:
+                    print(f"[DATAVAL-REJECT] {code} {k['date']}: {_reason} — 拒绝入库")
+                    continue
                 conn.execute("""
                     INSERT OR REPLACE INTO klines (code, date, open, close, high, low, volume, turnover, amplitude, change_pct)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

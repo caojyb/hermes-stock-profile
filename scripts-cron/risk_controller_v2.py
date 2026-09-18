@@ -47,8 +47,8 @@ def get_stock_realtime_price(code):
             is_limit_down = change_pct <= LIMIT_DOWN_THRESHOLD
             return {"price": price, "change_pct": change_pct,
                     "limit_down": is_limit_down}
-    except:
-        pass
+    except Exception as _e:
+        print(f"[EXC] risk_controller_v2.quote: {type(_e).__name__}: {_e}")
     return None
 
 
@@ -396,7 +396,8 @@ def check_portfolio_drawdown_v2(conn_sim, force_report=False):
     # M10-C7: canonical Portfolio Truth from Bitable
     try:
         portfolio_truth = build_real_snapshot() or {}
-    except Exception:
+    except Exception as _e:
+        print(f"[EXC] risk_controller_v2.py: {type(_e).__name__}: {_e}")
         portfolio_truth = {}
 
     conn_sim.row_factory = sqlite3.Row

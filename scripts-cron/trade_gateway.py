@@ -173,7 +173,8 @@ def get_pending_signals():
                 sig = json.load(fh)
             if sig.get("status") == "pending":
                 signals.append(sig)
-        except:
+        except Exception as _e:
+            print(f"[EXC] trade_gateway.py: {type(_e).__name__}: {_e}")
             pass
     return signals
 
@@ -191,7 +192,8 @@ def mark_signal(signal_id, status, detail=""):
                 sig["detail"] = detail
             with open(f, "w") as fh:
                 json.dump(sig, fh, ensure_ascii=False, indent=2)
-        except:
+        except Exception as _e:
+            print(f"[EXC] trade_gateway.py: {type(_e).__name__}: {_e}")
             pass
 
 

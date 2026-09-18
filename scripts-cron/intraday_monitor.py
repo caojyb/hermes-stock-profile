@@ -213,7 +213,8 @@ def get_market_opportunities(limit=8):
                 LIMIT ?
             ''', (limit * 3,)).fetchall()
             has_double_up = True
-        except Exception:
+        except Exception as _e:
+            print(f"[EXC] intraday_monitor.py: {type(_e).__name__}: {_e}")
             # double_up_scores 表不存在，退化为全市场扫描（向后兼容）
             rows = conn.execute('''
                 SELECT
@@ -499,7 +500,8 @@ def main():
                 conn.close()
                 if row and row[0]:
                     data_date = row[0]
-            except Exception:
+            except Exception as _e:
+                print(f"[EXC] intraday_monitor.py: {type(_e).__name__}: {_e}")
                 pass
             opp_text = build_opportunity_text(opp_rows, data_date=data_date)
             if opp_text:

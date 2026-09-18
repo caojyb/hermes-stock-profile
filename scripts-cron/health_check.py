@@ -236,7 +236,7 @@ def run_health_check():
     if os.path.exists(log_path):
         with open(log_path) as f:
             try: history = json.load(f)
-            except: pass
+            except Exception as _e: print(f"[EXC] health_check.py: {type(_e).__name__}: {_e}"); pass
     history.append(log_entry)
     history = history[-30:]  # 保留最近30条
     with open(log_path, 'w') as f:

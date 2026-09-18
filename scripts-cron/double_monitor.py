@@ -154,7 +154,8 @@ def load_watch_list() -> list[dict]:
         for s in watch_list:
             if s['entry_price'] == 0 and s['code'] in entry_map:
                 s['entry_price'] = entry_map[s['code']]
-    except Exception:
+    except Exception as _e:
+        print(f"[EXC] double_monitor.py: {type(_e).__name__}: {_e}")
         pass
     con.close()
     return watch_list
@@ -247,7 +248,7 @@ def validate_klines_health(code: str, klines: list[dict]) -> tuple[bool, str]:
     if not klines:
         return False, "klines 为空"
 
-    today = date.today()
+    today = RUN_DATE  # 幂等: K线健康检查也按运行日期判定
     latest_date_str = klines[-1]['date']
     try:
         latest_date = datetime.strptime(latest_date_str, '%Y-%m-%d').date()
@@ -291,7 +292,15 @@ conn = connect_db(str(MARKET_DB), writer=True)  # 工厂: WAL+busy_timeout=30s�
 conn.row_factory = sqlite3.Row
 cur = conn.cursor()
 
-today = date.today()
+# ── 幂等重跑支持（2026-09-18 二轮审计 P1-4）──
+# cron 正常调度: RUN_DATE = 今天; 手动补跑: python3 double_monitor.py --date 2026-09-18
+import argparse as _argparse
+_ap = _argparse.ArgumentParser(add_help=False)
+_ap.add_argument('--date', dest='_run_date', default=None, help='指定运行日期 YYYY-MM-DD（默认今天），用于幂等补跑')
+_known, _unknown = _ap.parse_known_args()
+RUN_DATE = (date.fromisoformat(_known._run_date) if _known._run_date else date.today())
+
+today = RUN_DATE
 lookback = (today - timedelta(days=400)).isoformat()
 today_str = today.isoformat()
 
@@ -306,7 +315,8 @@ try:
         cur.execute("SELECT MAX(date) FROM klines")
         latest_kline_row = cur.fetchone()
         latest_kline_date = latest_kline_row[0] if latest_kline_row else None
-    except Exception:
+    except Exception as _e:
+        print(f"[EXC] double_monitor.py: {type(_e).__name__}: {_e}")
         today_kline_count = 0
         latest_kline_date = None
     _cal = classify_trading_day(today, today_kline_count, latest_kline_date)
@@ -318,7 +328,8 @@ except Exception as e:
     try:
         cur.execute("SELECT COUNT(*) FROM klines WHERE date=?", (today_str,))
         today_kline_count = cur.fetchone()[0]
-    except Exception:
+    except Exception as _e:
+        print(f"[EXC] double_monitor.py: {type(_e).__name__}: {_e}")
         today_kline_count = 0
     IS_TRADING_DAY = today_kline_count > 0
     if not IS_TRADING_DAY:
@@ -526,7 +537,8 @@ for i, stock in enumerate(WATCH_LIST):
             for row in icc.fetchall():
                 intraday_signals.append({'type': row[0], 'ts': row[1], 'detail': row[2]})
             ic.close()
-        except:
+        except Exception as _e:
+            print(f"[EXC] double_monitor.py: {type(_e).__name__}: {_e}")
             pass
 
     # ── 输出 ──
@@ -731,7 +743,7 @@ try:
             print(f"  🚨 大市值IPO: {ipo_name}({ipo_code}) 市值{mcap/1e8:.0f}亿 行业:{sector}")
             affected = [s for s in WATCH_LIST if s['sector'] == sector]
             if affected:
-                suspend_end = date.today() + timedelta(days=SUSPEND_DAYS)
+                suspend_end = RUN_DATE + timedelta(days=SUSPEND_DAYS)
                 affected_json = json.dumps([{'code':s['code'],'name':s['name']} for s in affected], ensure_ascii=False)
                 sim_cur.execute("""INSERT INTO ipo_blocks (ipo_code,ipo_name,ipo_date,ipo_market_cap,sector,
                     suspend_start,suspend_end,affected_stocks) VALUES (?,?,?,?,?,?,?,?)""",
@@ -770,7 +782,8 @@ try:
     cur.execute("SELECT MAX(date) FROM klines")
     _mx = cur.fetchone()[0]
     kline_lag = (today - datetime.strptime(str(_mx)[:10], '%Y-%m-%d').date()).days if _mx else 999
-except Exception:
+except Exception as _e:
+    print(f"[EXC] double_monitor.py: {type(_e).__name__}: {_e}")
     kline_lag = 999
 from trading_permission import evaluate as tp_evaluate, classify_data_health
 data_health = classify_data_health(timing_ok=timing_ok, kline_lag_days=kline_lag)
@@ -880,7 +893,7 @@ current_count = len(open_map)
 # ── Trading Permission 计算（买入前，组合风险纳入 Gate，只读无副作用）──
 try:
     sim_cur.execute("SELECT date, total_value FROM portfolio_snapshots WHERE date >= ? ORDER BY date DESC",
-                    ((date.today() - timedelta(days=45)).isoformat(),))
+                    ((RUN_DATE - timedelta(days=45)).isoformat(),))
     _snaps = sim_cur.fetchall()
     _real = [s for s in _snaps if not str(s[0]).startswith('cooling_') and s[1]]
     if _real:
@@ -889,7 +902,8 @@ try:
         drawdown = (_high - _cur) / _high if _high else None
     else:
         drawdown = None
-except Exception:
+except Exception as _e:
+    print(f"[EXC] double_monitor.py: {type(_e).__name__}: {_e}")
     drawdown = None
 tp_result = tp_evaluate(
     regime_label=ENV_LABEL,
@@ -922,7 +936,8 @@ try:
             liq_pass, liq_amt, _ = check_liquidity_accurate(code)
             if not liq_pass:
                 filters.append(f'流动性{liq_amt/1e4:.0f}万')
-        except Exception:
+        except Exception as _e:
+            print(f"[EXC] double_monitor.py: {type(_e).__name__}: {_e}")
             pass
         stock['filters'] = filters
 except Exception as e:
@@ -1177,11 +1192,12 @@ try:
         }
         with open(_os.path.join(_out_dir, f'{today_str}.json'), 'w', encoding='utf-8') as _f:
             _json.dump(_out, _f, ensure_ascii=False, indent=2)
-    except Exception:
+    except Exception as _e:
+        print(f"[EXC] double_monitor.py: {type(_e).__name__}: {_e}")
         pass
 
     # 今日交易
-    today_str = date.today().isoformat()
+    today_str = RUN_DATE.isoformat()
     sim_cur.execute("SELECT code, name, status, buy_price, profit_pct FROM trades WHERE buy_date=?", (today_str,))
     buys = sim_cur.fetchall()
     sim_cur.execute("SELECT code, name, status, buy_price, profit_pct FROM trades WHERE sell_date=?", (today_str,))
@@ -1278,12 +1294,12 @@ except Exception as e:
     print(f"  模拟仓摘要生成异常: {e}")
 print(f"{'─'*50}")
 
-print(f"\n✅ 完成 | {date.today()}")
+print(f"\n✅ 完成 | {RUN_DATE}")
 
 # 记录管道状态
 if PIPELINE_AVAILABLE:
     try:
-        today_str_local = date.today().isoformat()
+        today_str_local = RUN_DATE.isoformat()
         record_status('double-monitor-daily', 'ok', today_str_local,
                       row_count=len(WATCH_LIST), message=f'扫描 {len(WATCH_LIST)} 只标的')
     except Exception as e:

@@ -97,7 +97,8 @@ def fetch_risk_flags(cur, codes):
             GROUP BY code
         ''', codes + codes + codes)
         event_risk = {r[0]: r[1] for r in cur.fetchall()}
-    except:
+    except Exception as _e:
+        print(f"[EXC] long_term_holding.py: {type(_e).__name__}: {_e}")
         event_risk = {}
     
     for code in codes:
@@ -114,7 +115,8 @@ def load_sector_rating():
     try:
         with open(SECTOR_RATING_FILE) as f:
             return json.load(f)
-    except:
+    except Exception as _e:
+        print(f"[EXC] long_term_holding.py: {type(_e).__name__}: {_e}")
         return {}
 
 def get_sector_for_code(cur, code):

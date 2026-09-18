@@ -191,7 +191,8 @@ def update_north_cache(code, net_buy):
         try:
             with open(NORTH_CACHE) as f:
                 cache = json.load(f)
-        except:
+        except Exception as _e:
+            print(f"[EXC] northbound_stock.py: {type(_e).__name__}: {_e}")
             pass
     
     today = date.today().isoformat()
@@ -216,7 +217,8 @@ def check_consecutive_sell(code, net_buy):
         try:
             with open(NORTH_CACHE) as f:
                 cache = json.load(f)
-        except:
+        except Exception as _e:
+            print(f"[EXC] northbound_stock.py: {type(_e).__name__}: {_e}")
             pass
     
     history = cache.get(code, [])
@@ -238,7 +240,8 @@ def check_consecutive_buy(code, net_buy):
         try:
             with open(NORTH_CACHE) as f:
                 cache = json.load(f)
-        except:
+        except Exception as _e:
+            print(f"[EXC] northbound_stock.py: {type(_e).__name__}: {_e}")
             pass
     
     history = cache.get(code, [])

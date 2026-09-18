@@ -172,7 +172,8 @@ def aggregate_5min(data):
                 minute_slot = (dt.minute // 5) * 5
                 slot_key = dt.replace(minute=minute_slot, second=0)
                 groups[slot_key].append((o, c, h, l, v, amt))
-            except:
+            except Exception as _e:
+                print(f"[EXC] intraday_cache.py: {type(_e).__name__}: {_e}")
                 continue
         
         klines = []
@@ -218,7 +219,8 @@ def get_ma20_from_daily(code):
         if len(closes) >= 20:
             return sum(closes) / len(closes)
         return None
-    except:
+    except Exception as _e:
+        print(f"[EXC] intraday_cache.py: {type(_e).__name__}: {_e}")
         return None
 
 def check_signal_a(code, klines_5min, ma20):

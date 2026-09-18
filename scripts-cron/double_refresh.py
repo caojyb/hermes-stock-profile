@@ -128,7 +128,7 @@ for code in fin_data:
     if list_date:
         try:
             if (today - __import__('datetime').datetime.strptime(list_date, '%Y-%m-%d').date()).days < 180: continue
-        except: pass
+        except Exception as _e: print(f"[EXC] double_refresh.py: {type(_e).__name__}: {_e}"); pass
     
     fin = fin_data[code]
     r1g, r2g, p1g, dr1 = fin['r1g'], fin['r2g'], fin['p1g'], fin['dr1']
@@ -311,7 +311,7 @@ for code in fin_data:
     if list_date:
         try:
             if (today - __import__('datetime').datetime.strptime(list_date, '%Y-%m-%d').date()).days < 180: continue
-        except: pass
+        except Exception as _e: print(f"[EXC] double_refresh.py: {type(_e).__name__}: {_e}"); pass
     
     fin = fin_data[code]
     r1g, r2g, p1g, dr1 = fin['r1g'], fin['r2g'], fin['p1g'], fin['dr1']

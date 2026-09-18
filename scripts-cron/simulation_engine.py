@@ -115,15 +115,18 @@ def migrate_sim_db(conn):
     cur = conn.cursor()
     try:
         cur.execute("ALTER TABLE trades ADD COLUMN hold_mode TEXT DEFAULT 'normal'")
-    except:
+    except Exception as _e:
+        print(f"[EXC] simulation_engine.py: {type(_e).__name__}: {_e}")
         pass  # 列已存在
     try:
         cur.execute("ALTER TABLE trades ADD COLUMN stop_loss_pct REAL")
-    except:
+    except Exception as _e:
+        print(f"[EXC] simulation_engine.py: {type(_e).__name__}: {_e}")
         pass
     try:
         cur.execute("ALTER TABLE trades ADD COLUMN take_profit_pct REAL")
-    except:
+    except Exception as _e:
+        print(f"[EXC] simulation_engine.py: {type(_e).__name__}: {_e}")
         pass
     conn.commit()
 

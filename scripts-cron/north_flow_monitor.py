@@ -219,7 +219,8 @@ def load_north_log():
     try:
         with open(NORTH_LOG) as f:
             return json.load(f)
-    except:
+    except Exception as _e:
+        print(f"[EXC] north_flow_monitor.py: {type(_e).__name__}: {_e}")
         return {}
 
 

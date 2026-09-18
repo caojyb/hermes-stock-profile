@@ -306,7 +306,8 @@ def _prev_trade_date() -> str:
         con.close()
         if latest and latest < date.today().isoformat():
             return latest
-    except Exception:
+    except Exception as _e:
+        print(f"[EXC] lhb_monitor.py: {type(_e).__name__}: {_e}")
         pass
     d = date.today() - timedelta(days=1)
     while d.weekday() >= 5:  # 跳过周六周日

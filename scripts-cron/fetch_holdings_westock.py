@@ -103,7 +103,8 @@ def run_westock(cmd, code):
                                capture_output=True, text=True, timeout=30)
             if r.stdout.strip() and len(r.stdout.strip()) > 30:
                 return r.stdout
-        except Exception:
+        except Exception as _e:
+            print(f"[EXC] fetch_holdings_westock.py: {type(_e).__name__}: {_e}")
             pass
         _t.sleep(2)  # 冷启动/限流重试
     return ""
@@ -180,7 +181,7 @@ def main():
                 name = sh[0].get('name','')
                 def _ch(v):
                     try: return float(str(v).replace(',',''))
-                    except: return 0
+                    except Exception as _e: print(f"[EXC] fetch_holdings_westock.py: {type(_e).__name__}: {_e}"); return 0
                 changed = [r for r in sh if abs(_ch(r.get('holdChange',0)))>0]
                 c.execute("DELETE FROM holder_change WHERE code=? AND change_date=?",
                           (raw, datetime.now().strftime('%Y-%m-%d')))
@@ -221,7 +222,7 @@ def main():
 def _f(v):
     try:
         return float(str(v).replace('%','')) if v not in (None,'') else None
-    except: return None
+    except Exception as _e: print(f"[EXC] fetch_holdings_westock.py: {type(_e).__name__}: {_e}"); return None
 
 if __name__ == '__main__':
     main()

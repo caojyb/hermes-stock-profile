@@ -604,7 +604,8 @@ def _refresh_eastmoney_lhb(date_str: str) -> int:
                 r['turnover_rate'], r['free_mcap'], r['explain'], r['fetched_at']
             ))
             inserted += 1
-        except Exception:
+        except Exception as _e:
+            print(f"[EXC] daily_data_refresh.py: {type(_e).__name__}: {_e}")
             pass
     con.commit()
     con.close()
@@ -683,7 +684,8 @@ def _refresh_westock_lhb(date_str: str, batch_size: int = 10) -> int:
                         datetime.now().isoformat(),
                     ))
                     inserted += 1
-                except Exception:
+                except Exception as _e:
+                    print(f"[EXC] daily_data_refresh.py: {type(_e).__name__}: {_e}")
                     pass
         con.commit()
     con.close()
