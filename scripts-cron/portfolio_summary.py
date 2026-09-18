@@ -75,62 +75,58 @@ def get_sim_positions():
 def get_real_positions():
     """从飞书 Bitable 获取真实持仓"""
     try:
-        sys.path.insert(0, str(SCRIPT_DIR.parent / 'skills/stock/stock-expert/skills/feishu-bitable'))
-        from bitable_reader import BitableReader
+        sys.path.insert(0, str(SCRIPT_DIR.parent.parent / 'skills/stock/stock-expert/skills/feishu-bitable'))
+        from bitable_reader import read_positions
     except ImportError:
-        print("[WARN] bitable_reader 不可用，跳过真实持仓")
+        print("🚨 bitable_reader 不可用，真实持仓缺失（路径: " +
+              str(SCRIPT_DIR.parent.parent / 'skills/stock/stock-expert/skills/feishu-bitable') + "）")
         return []
 
     try:
-        reader = BitableReader(limit=100)
-        result = reader._execute_command()
-        data = json.loads(result.stdout)
-        fields = data['data']['fields']
-        records_raw = data['data']['data']
-
+        from bitable_reader import read_positions
         positions = []
-        for raw in records_raw:
-            record = dict(zip(fields, raw))
-            status = record.get('是否买入', [])
-            if isinstance(status, list) and '已买入' in status:
-                code = str(record.get('股票ID', '')).strip()
-                name = str(record.get('name', '')).strip()
-                if not code or not name:
-                    continue
-                cost_price = float(record.get('买入价格', 0) or 0)
-                current_price = float(record.get('现价', 0) or 0)
-                shares = int(record.get('持仓数量', 0) or 0)
-                sector_raw = record.get('所属板块', '?')
-                sector = ','.join(sector_raw) if isinstance(sector_raw, list) else str(sector_raw)
-                pnl_pct = float(record.get('盈亏率', 0) or 0)
-                pnl_abs = float(record.get('盈亏', 0) or 0)
+        for pos in read_positions(limit=100):
+            if pos.buy_flag != '已买入':
+                continue
+            code = pos.stock_code.strip()
+            name = pos.stock_name.strip()
+            if not code or not name:
+                continue
+            cost_price = pos.cost_price or 0
+            current_price = pos.current_price or 0
+            shares = int(pos.quantity or 0)
+            sector = pos.industry or '?'
+            pnl_pct = pos.change_pct or 0
+            pnl_abs = pos.profit_loss or 0
 
-                # 重算盈亏（Bitable 数据可能不准）
-                if cost_price > 0 and current_price > 0:
-                    calc_pnl_pct = (current_price - cost_price) / cost_price * 100
-                    calc_pnl_abs = (current_price - cost_price) * shares
-                else:
-                    calc_pnl_pct = pnl_pct
-                    calc_pnl_abs = pnl_abs
+            # 重算盈亏（Bitable 数据可能不准）
+            if cost_price > 0 and current_price > 0:
+                calc_pnl_pct = (current_price - cost_price) / cost_price * 100
+                calc_pnl_abs = (current_price - cost_price) * shares
+            else:
+                calc_pnl_pct = pnl_pct
+                calc_pnl_abs = pnl_abs
 
-                positions.append({
-                    'source': 'bitable',
-                    'code': code,
-                    'name': name,
-                    'sector': sector,
-                    'buy_date': str(record.get('买入日期', '') or ''),
-                    'buy_price': cost_price,
-                    'current_price': current_price,
-                    'shares': shares,
-                    'cost': cost_price * shares if cost_price > 0 else 0,
-                    'market_value': current_price * shares if current_price > 0 else 0,
-                    'pnl_pct': calc_pnl_pct,
-                    'pnl_abs': calc_pnl_abs,
-                    'rsi': record.get('最新RSI', '?'),
-                })
+            positions.append({
+                'source': 'bitable',
+                'code': code,
+                'name': name,
+                'sector': sector,
+                'buy_date': str(pos.trade_date or ''),
+                'buy_price': cost_price,
+                'current_price': current_price,
+                'shares': shares,
+                'cost': cost_price * shares if cost_price > 0 else 0,
+                'market_value': current_price * shares if current_price > 0 else 0,
+                'pnl_pct': calc_pnl_pct,
+                'pnl_abs': calc_pnl_abs,
+                'rsi': pos.latest_rsi,
+            })
+        if not positions:
+            print("🚨 Bitable 读取成功但无已买入持仓（预期>0），持仓数据不完整")
         return positions
     except Exception as e:
-        print(f"[WARN] Bitable 读取失败: {e}")
+        print(f"🚨 Bitable 真实持仓读取失败（原 _execute_command 调用已失效）: {e}")
         return []
 
 

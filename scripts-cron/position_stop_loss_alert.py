@@ -173,8 +173,9 @@ def _portfolio_context(snap):
     """从 Real Portfolio Snapshot 提取 Portfolio context（真实数据，不读 simulation）。
     返回 (position_count, sector_counts, total_mv, drawdown_status, drawdown)。"""
     p = snap.get('portfolio', {})
+    total_mv = p.get('total_holdings_value') or p.get('holdings_value') or 0
     return (p.get('position_count', 0), p.get('sector_exposure', {}),
-            p.get('total_holdings_value', 0), p.get('drawdown_status', 'UNKNOWN'), p.get('drawdown'))
+            total_mv, p.get('drawdown_status', 'UNKNOWN'), p.get('drawdown'))
 
 
 def build_position_decision(p, mkt, regime, permission, snap, total_capital=None):
@@ -294,6 +295,27 @@ def run_decision():
                  'avg_cost': p['cost_price'], 'current_price': p['current_price'],
                  'sector': p.get('sector', '')} for p in positions]
     snap = build_real_snapshot(holdings=holdings, source='bitable')
+    if not snap.get('ok'):
+        print(f"[ERROR] Real snapshot 构建失败: {snap.get('error')}")
+        sys.exit(1)
+    _snap_holdings = snap.get('holdings', []) or []
+    if len(_snap_holdings) != len(positions):
+        print(f"🚨 HOLDINGS_CONTEXT_MISMATCH: bitable读取={len(positions)} vs "
+              f"snapshot持仓={len(_snap_holdings)} — 持仓上下文残缺，拒绝出建议")
+        sys.exit(1)
+    _zero_qty = [h for h in _snap_holdings if (h.get('quantity') or 0) <= 0]
+    if _zero_qty:
+        print(f"🚨 QUANTITY_ZERO: {[(h['symbol'], h['name']) for h in _zero_qty]} "
+              f"— 持仓数量解析为0，拒绝出建议")
+        sys.exit(1)
+    _qr = snap.get('quality_report', {})
+    if _qr.get('error_count', 0) > 0:
+        print("🚨 PORTFOLIO_QUALITY_ERROR: 持仓数据存在 ERROR 级质量异常（疑似成本录入错误/未复权），"
+              "拒绝基于残缺成本出 SELL 建议。请先在飞书 Bitable 核对以下记录：")
+        for _f in _qr.get('flags', []):
+            if _f.get('level') == 'ERROR':
+                print(f"   {_f.get('symbol')} {_f.get('name')} {_f.get('field')}: {_f.get('detail')}")
+        sys.exit(1)
     codes = [p['code'] for p in positions]
     market_data = get_market_data(codes)
     # regime + permission

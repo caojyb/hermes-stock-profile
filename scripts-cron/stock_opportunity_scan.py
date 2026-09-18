@@ -239,34 +239,27 @@ def get_holdings():
                          'skills/stock/stock-expert/skills/feishu-bitable')
         if _skill_dir not in sys.path:
             sys.path.insert(0, _skill_dir)
-        from bitable_reader import BitableReader
-        reader = BitableReader(limit=100)
-        result = reader._execute_command()
-        data = json.loads(result.stdout)
-        fields = data['data']['fields']
-        records_raw = data['data']['data']
-        for raw in records_raw:
-            record = dict(zip(fields, raw))
-            status_field = record.get('是否买入', [])
-            if isinstance(status_field, list) and '已买入' in status_field:
-                code = str(record.get('股票ID', '')).strip()
-                name = str(record.get('name', '')).strip()
+        from bitable_reader import read_positions
+        for pos in read_positions(limit=100):
+            if pos.buy_flag == '已买入':
+                code = pos.stock_code.strip()
+                name = pos.stock_name.strip()
                 if not code or not name:
                     continue
-                cost_price = float(record.get('买入价格', 0) or 0)
-                shares = int(record.get('持仓数量', 0) or 0)
                 if code not in holdings:
                     holdings[code] = {
                         'name': name,
                         'source': 'bitable',
-                        'buy_price': cost_price,
-                        'shares': shares,
+                        'buy_price': pos.cost_price or 0,
+                        'shares': int(pos.quantity or 0),
                         'status': '已买入',
                         'signal_type': '',
-                        'buy_date': str(record.get('买入日期', '') or ''),
+                        'buy_date': str(pos.trade_date or ''),
                     }
+        if not any(h.get('source') == 'bitable' for h in holdings.values()):
+            print("[ERROR] Bitable 无已买入持仓（读取成功但为空），持仓上下文不完整")
     except Exception as e:
-        print(f"[WARN] 读取 Bitable 持仓失败: {e}")
+        print(f"🚨 Bitable 真实持仓读取失败（原 _execute_command 调用已失效）: {e}")
 
     return holdings
 
