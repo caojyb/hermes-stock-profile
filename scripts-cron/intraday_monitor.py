@@ -64,6 +64,9 @@ def is_trading_day():
 from stock_data import get_stock_quote
 from signal_engine import SignalEngine
 from feishu_sender import send_signal_alert, feishu_send_message
+import sys as _hb_sys
+_hb_sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+from heartbeat import write as _hb_write
 
 # 本地缓存市场扫描（秒出结果，不依赖实时API）
 try:
@@ -594,4 +597,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+        _hb_write('stock-intraday-minute', 'ok', detail='scan cycle complete', expected_interval_seconds=900)
+    except SystemExit:
+        raise
+    except Exception as _e:
+        print(f"[EXC] intraday_monitor.heartbeat: {type(_e).__name__}: {_e}")

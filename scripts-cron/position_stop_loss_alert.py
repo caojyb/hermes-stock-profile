@@ -31,6 +31,9 @@ MARKET_DB = str(get_db_path('market_cache'))
 # 飞书
 FEISHU_SENDER = str(SCRIPT_DIR.parent / 'skills/stock/stock-expert/skills/feishu-bitable/feishu_sender.py')
 import decision._local_constants as _local_constants
+import sys as _hb_sys
+_hb_sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+from heartbeat import write as _hb_write
 FEISHU_CHAT_ID = _local_constants.FEISHU_CHAT_ID
 BITABLE_TOKEN = _local_constants.BITABLE_BASE_TOKEN
 TABLE_ID = _local_constants.BITABLE_TABLE_ID
@@ -308,14 +311,9 @@ def run_decision():
         print(f"🚨 QUANTITY_ZERO: {[(h['symbol'], h['name']) for h in _zero_qty]} "
               f"— 持仓数量解析为0，拒绝出建议")
         sys.exit(1)
-    _qr = snap.get('quality_report', {})
-    if _qr.get('error_count', 0) > 0:
-        print("🚨 PORTFOLIO_QUALITY_ERROR: 持仓数据存在 ERROR 级质量异常（疑似成本录入错误/未复权），"
-              "拒绝基于残缺成本出 SELL 建议。请先在飞书 Bitable 核对以下记录：")
-        for _f in _qr.get('flags', []):
-            if _f.get('level') == 'ERROR':
-                print(f"   {_f.get('symbol')} {_f.get('name')} {_f.get('field')}: {_f.get('detail')}")
-        sys.exit(1)
+    # 2026-09-18 三轮: 用户确认成本真实（ratio 大是实际盈亏），成本异常不再硬失败。
+    # 保留: build_real_snapshot 内的 WARNING 打印（醒目但不拦截）。
+    # 仅 quantity<=0 / 持仓数不一致（上方）仍硬失败——那才是真正的解析层错误。
     codes = [p['code'] for p in positions]
     market_data = get_market_data(codes)
     # regime + permission
@@ -402,6 +400,10 @@ def main():
         return
     report = format_decisions(decisions)
     print(report)
+    try:
+        _hb_write('position-stop-loss-alert', 'ok', detail=f'decisions={len(decisions)}', expected_interval_seconds=86400)
+    except Exception as _e:
+        print(f"[EXC] stop_loss_alert.heartbeat: {type(_e).__name__}: {_e}")
     # 只对非 HOLD 告警（HOLD 静默）
     actionable = [i for i in decisions if i['decision'].action != 'HOLD']
     if send and actionable:

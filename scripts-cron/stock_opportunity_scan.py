@@ -75,6 +75,9 @@ def session_label(now=None):
 # ── 路径配置 ──────────────────────────────────────────────
 # HERMES_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.compat_paths import MARKET_DB as _STOCK_MARKET_DB
+import sys as _hb_sys
+_hb_sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+from heartbeat import write as _hb_write
 MARKET_DB = _STOCK_MARKET_DB
 FEISHU_TOKEN = os.environ.get("FEISHU_BOT_TOKEN", "")
 
@@ -715,3 +718,8 @@ if __name__ == "__main__":
 
     # 自动追踪到推荐池（带 source 标记）
     track_to_pool(alerts, source="intraday_scan")
+
+    try:
+        _hb_write('stock-opportunity-push', 'ok', detail=f'alerts={len(alerts)}', expected_interval_seconds=1800)
+    except Exception as _e:
+        print(f"[EXC] opportunity_scan.heartbeat: {type(_e).__name__}: {_e}")

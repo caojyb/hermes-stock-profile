@@ -156,6 +156,13 @@ def run_all() -> dict:
 
 
 import json  # noqa: E402  (run_all 使用)
+import sys as _hb_sys
+_hb_sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+from heartbeat import write as _hb_write
 
 if __name__ == '__main__':
     run_all()
+    try:
+        _hb_write('portfolio-risk-guard', 'ok', detail='risk guard cycle complete', expected_interval_seconds=86400)
+    except Exception as _e:
+        print(f"[EXC] portfolio_risk_guard.heartbeat: {type(_e).__name__}: {_e}")
