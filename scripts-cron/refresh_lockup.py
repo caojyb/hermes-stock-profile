@@ -71,6 +71,52 @@ def fetch_lockup(days=60):
     return rows
 
 
+def fetch_holder_changes(days=30):
+    """六轮提升点2: 大股东增减持明细（东财 RPT_SHARE_HOLDER_INCREASE，近 N 天全市场）
+    返回 [(code, change_date, shares_股, direction)] direction: '减持'/'增持'
+    写入 market_cache.holder_change —— 修 deep_screen_gate 减持检查对候选股的盲区"""
+    rows = []
+    page = 1
+    since = (date.today() - timedelta(days=days)).isoformat()
+    while page <= 30:
+        r = requests.get(
+            'https://datacenter-web.eastmoney.com/api/data/v1/get',
+            params={'reportName': 'RPT_SHARE_HOLDER_INCREASE',
+                    'columns': 'SECURITY_CODE,SECURITY_NAME_ABBR,CHANGE_NUM,CHANGE_NUM_SYMBOL,END_DATE,TRADE_DATE,CHANGE_RATE',
+                    'pageSize': 500, 'pageNumber': page,
+                    'sortColumns': 'END_DATE,SECURITY_CODE,EITIME', 'sortTypes': '-1,-1,-1',
+                    'filter': f"(END_DATE>='{since}')",
+                    'source': 'WEB', 'client': 'WEB'},
+            timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
+        d = r.json()
+        if not d.get('success') or not d.get('result'):
+            break
+        data = d['result'].get('data') or []
+        if not data:
+            break
+        for it in data:
+            code = str(it.get('SECURITY_CODE') or '')
+            cd = (it.get('TRADE_DATE') or it.get('END_DATE') or '')[:10]
+            try:
+                shares = abs(float(it.get('CHANGE_NUM') or 0))
+            except (TypeError, ValueError):
+                shares = 0.0
+            # CHANGE_NUM_SYMBOL 实测是带符号数值（负=减持，如 -524.09），不是 +/- 字符串
+            try:
+                direction = '减持' if float(it.get('CHANGE_NUM_SYMBOL') or 0) < 0 else '增持'
+            except (TypeError, ValueError):
+                direction = '增持'
+            if not code or not cd:
+                continue
+            rows.append((code, cd, shares, direction))
+        total_pages = d['result'].get('pages', 1)
+        if page >= total_pages:
+            break
+        page += 1
+        time.sleep(0.5)
+    return rows
+
+
 def main():
     t0 = time.time()
     rows = fetch_lockup(60)
@@ -90,6 +136,24 @@ def main():
     near30 = conn.execute(
         "SELECT COUNT(*) FROM lockup_release WHERE release_date BETWEEN ? AND ? AND release_shares >= 1e8",
         (date.today().isoformat(), (date.today() + timedelta(days=30)).isoformat())).fetchone()[0]
+
+    # ── 六轮提升点2: 同 job 顺刷减持明细（覆盖候选股盲区）──
+    reduce_n = 0
+    try:
+        hc = fetch_holder_changes(30)
+        cur.execute("DELETE FROM holder_change WHERE change_date >= ?",
+                    ((date.today() - timedelta(days=30)).isoformat(),))
+        cur.executemany(
+            "INSERT OR REPLACE INTO holder_change (code, change_date, change_shares, change_type) VALUES (?,?,?,?)",
+            hc)
+        conn.commit()
+        reduce_n = len(hc)
+        n_reduce = cur.execute(
+            "SELECT COUNT(*) FROM holder_change WHERE change_date >= ? AND change_type='减持'",
+            ((date.today() - timedelta(days=30)).isoformat(),)).fetchone()[0]
+        print(f"  减持表刷新: {reduce_n} 条（近30天, 其中减持 {n_reduce} 条）")
+    except Exception as e:
+        print(f"[EXC] refresh_lockup.py 减持刷新: {type(e).__name__}: {e}（解禁数据不受影响）")
     conn.close()
     try:
         from heartbeat import write

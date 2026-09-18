@@ -143,10 +143,24 @@ def gate(code, name=''):
         coverage.append('解禁核查: 数据不可用')
     if check_lhb_recent(code):
         flags.append('近5日龙虎榜上榜（游资炒作警示）')
+        # 六轮提升点5: 席位分级——机构净买偏正面，纯游资偏负面
+        try:
+            _, lhb = _dbs()
+            conn_l = sqlite3.connect(lhb, timeout=30)
+            since = (date.today() - timedelta(days=9)).isoformat()
+            exps = [str(r[0] or '') for r in conn_l.execute(
+                "SELECT explain FROM lhb_data WHERE code=? AND trade_date >= ? AND explain IS NOT NULL",
+                (code, since)).fetchall()]
+            conn_l.close()
+            org_buy = sum(1 for e in exps if '机构买入' in e)
+            if org_buy >= 2:
+                flags.append(f'龙虎榜席位: {org_buy} 家机构买入（机构参与，含正面信号）')
+        except Exception:
+            pass
     if check_holder_reduce(code):
         flags.append('近30日股东减持')
-    # 减持检查覆盖说明: holder_change 主要覆盖持仓股（westock 写入），对候选股基本盲
-    coverage.append('减持核查: holder_change 仅覆盖持仓股，候选股不覆盖（已知盲区）')
+    # 六轮提升点2已落地: holder_change 由周日 refresh_lockup 全市场刷（RPT_SHARE_HOLDER_INCREASE）
+    coverage.append('减持核查: holder_change 全市场（周刷，最迟滞后 7 天）')
     return {'pass': len(veto) == 0, 'veto': veto, 'flags': flags, 'coverage': coverage}
 
 

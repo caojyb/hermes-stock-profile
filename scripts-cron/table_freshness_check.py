@@ -34,7 +34,20 @@ def main():
     alerts = []
     conn_m = sqlite3.connect(_db_path('MARKET'), timeout=30)
     conn_l = sqlite3.connect(_db_path('LHB'), timeout=30)
+    # 六轮提升点6: klines 阈值 4天太松——刷新失败的次日滞后仅1天但所有信号吃旧数据。
+    # 交易日判断: 17:55 跑在交易日，此时 klines 应为当日；滞后≥1 个自然日即报警（用 exchange_holidays 排除节假日）
+    try:
+        from exchange_holidays import is_trading_calendar_day
+        klines_expected_today = is_trading_calendar_day(today)
+    except Exception:
+        klines_expected_today = today.weekday() < 5
+    checks = []
     for table, col, kind, max_lag, desc in CHECKS:
+        if table == 'klines':
+            checks.append((table, col, kind, 0 if klines_expected_today else None, desc))
+        else:
+            checks.append((table, col, kind, max_lag, desc))
+    for table, col, kind, max_lag, desc in checks:
         try:
             conn = conn_m if kind == 'MARKET' else conn_l
             if table == 'lockup_release':
