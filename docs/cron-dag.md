@@ -2,7 +2,7 @@
 
 ## 概述
 
-股票系统 Cron 任务调度图。当前共 **31 个 job**，按触发时机分为日间链和周链。
+股票系统 Cron 任务调度图。当前共 **33 个 job**，按触发时机分为日间链和周链。
 
 ## 日间链（交易日）
 
@@ -27,6 +27,7 @@
 | 17:30 | `track-outcomes-daily` | `track_outcomes.py` | 推荐结果 outcome 回写 | 异常✅ | 2026-09-18 限交易日 |
 | 17:50 | `check-market-cache-health` | `check_market_cache_health.py` | 数据库健康检查 | 异常✅ | 2026-09-18 限交易日 |
 | 17:55 | `table-freshness-check` | `table_freshness_check.py` | 关键表新鲜度（klines/lhb/解禁/减持滞后告警） | 异常✅ | 2026-09-18 新增（六轮） |
+| 17:35 | `verification-scorecard` | `verification_scorecard.py` | 验证期记分牌（Day/样本/tripwire/到期判定草案） | 每日✅ | 2026-09-18 新增（七轮） |
 
 ## 周链（周日）
 
