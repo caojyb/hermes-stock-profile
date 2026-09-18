@@ -198,10 +198,10 @@ def update_pool_prices():
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     today = date.today().isoformat()
     
-    # 获取所有active的推荐
+    # 获取所有active的推荐（含 notes——更新时保留推送链元数据）
     cur.execute("""
         SELECT id, code, name, entry_price, stop_loss, take_profit_1, take_profit_2,
-               entry_date, hold_days_max, tier, tier_type, max_position_pct
+               entry_date, hold_days_max, tier, tier_type, max_position_pct, notes
         FROM recommendations
         WHERE status = 'active'
     """)
@@ -209,7 +209,7 @@ def update_pool_prices():
     updated = 0
     for row in cur.fetchall():
         (id_, code, name, entry_price, stop_loss, tp1, tp2,
-         entry_date, hold_days_max, tier, tier_type, max_pos) = row
+         entry_date, hold_days_max, tier, tier_type, max_pos, row_notes) = row
         
         # 获取当前价格
         current_price = get_price_from_cache(code)
@@ -226,6 +226,9 @@ def update_pool_prices():
         # 判断状态
         status = 'active'
         notes = ''
+        # 手工验证留痕修复(2026-09-18): 原实现整列重写 notes，抹掉推送链写入的元数据
+        # （source=intraday_scan/score 等），导致下游同源 SQL 失效。改为追加式保留。
+        _orig_notes = str(row_notes or '')
         
         if current_price <= stop_loss:
             status = 'hit_stop_loss'
@@ -240,7 +243,9 @@ def update_pool_prices():
             status = 'expired'
             notes = f'超时持有{days_held}天, +{pnl_pct:.1f}%'
         
-        # 更新
+        # 更新（notes 追加式: 保留推送链元数据，状态描述放前面）
+        _status_note = notes
+        notes = f"{_status_note} | {_orig_notes}" if _orig_notes else (_status_note or _orig_notes)
         cur.execute("""
             UPDATE recommendations SET
                 current_price = ?, days_held = ?, pnl_pct = ?,
