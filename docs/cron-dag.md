@@ -107,11 +107,22 @@
    - `scripts/cron/decision/`（决策链：engine/execution/user_authority/validation_integrity_gate/风控守卫）
    - `stock-work/core/`（研究平面，尤其 target_engine / strategy_runner / walk_forward）
    ```bash
-   # 一条命令跑全套（venv 已装 pytest）
-   cd ~/.hermes/profiles/stock/scripts/cron && \
-     PYTHONPATH=~/stock-work:... ../../.venv/bin/python3 -m pytest decision/ -q --no-header -p no:cacheprovider
-   cd ~/.hermes/profiles/stock/stock-work && \
-     PYTHONPATH=. ../.venv/bin/python3 -m pytest core/research -q --no-header -p no:cacheprovider
+   # 一条命令跑全套（venv 已装 pytest）。
+   # 2026-09-19: 原命令缺 HERMES_HOME → 原样执行撞
+   # RuntimeError: HERMES_HOME or STOCK_WORK_ROOT must be defined;
+   # 且 ... 占位符 + tail 会掩盖退出码。现为可原样复制的完整版:
+   set -e
+   P=~/.hermes/profiles/stock
+   cd $P/scripts/cron && \
+     HERMES_HOME=$P PYTHONPATH=$P/stock-work:$P/scripts/cron \
+     $P/.venv/bin/python3 -m pytest decision/ -q --no-header -p no:cacheprovider
+   # ↑ exit 0 才算过; 期望: 534 passed, 17 skipped
+   # 测试隔离核对（必须 == 165）:
+   ls $P/scripts/cron/decision/snapshots | wc -l
+   cd $P/stock-work && \
+     HERMES_HOME=$P PYTHONPATH=$P/stock-work \
+     $P/.venv/bin/python3 -m pytest core/research -q --no-header -p no:cacheprovider
+   # ↑ exit 0 才算过; 期望: 214 passed
    ```
 2. **baseline（2026-09-19 green）**：decision/ 534 passed + 17 skipped；core/research 214 passed。
 3. **测试隔离纪律**：任何测试不得写生产目录（snapshots/executions/outcomes/reports）。用 monkeypatch 隔离 SNAP_DIR（参考 conftest.isolate_snapshots）；跑完核对 `ls decision/snapshots | wc -l` == 165。
