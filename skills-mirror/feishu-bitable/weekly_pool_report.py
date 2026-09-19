@@ -351,6 +351,11 @@ def generate_report(days: int = 7) -> str:
 def send_to_feishu(text):
     """发送报告到飞书群"""
     import urllib.request
+    # 2026-09-19: 全局禁推开关（与 feishu_sender._post 同语义; 本函数走独立 webhook 不经 _post）
+    if os.environ.get("FEISHU_DISABLE") == "1":
+        print("[INFO] FEISHU_DISABLE=1，跳过飞书推送（报告已输出到 stdout）")
+        print(text)
+        return
     token = os.environ.get("FEISHU_BOT_TOKEN", "")
     if not token:
         # 尝试从hermes secrets获取

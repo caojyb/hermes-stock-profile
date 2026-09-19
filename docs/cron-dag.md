@@ -2,7 +2,7 @@
 
 ## 概述
 
-股票系统 Cron 任务调度图。当前共 **34 个 job**（28 enabled + 6 paused），按触发时机分为日间链和周链。
+股票系统 Cron 任务调度图。当前共 **24 个 job**（24 enabled / 0 paused），按触发时机分为日间链和周链。
 
 ## 日间链（交易日）
 
@@ -31,10 +31,10 @@
 
 | 时间 | Job | 脚本 | 职责 | 飞书推送 | 状态 |
 |------|-----|------|------|----------|------|
-| 16:00 | `weekly-fundamental-refresh` | `weekly_fundamental_refresh.sh` | PE/PB + 财务数据刷新 (合并 2→1) | ✅ | 合并完成 |
-| 17:20 | `stock-weekly-screener` | `stock_screener_wrapper.sh` | 翻倍潜力周选 + 市场环境分析段 | ✅ | 2026-09-19 并入 env-report |
-| 16:30 | `stock-weekly-pipeline` | `weekly_pipeline.py` | 全流程引擎 | ✅ | 活跃 |
-| 17:00 | `us-stock-weekly-update` | `us_stock_weekly_update.py` | 美股持仓更新 | ❌ | 活跃 |
+| 16:00 | `sunday-mega` | `sunday_mega.sh` | 周日数据日：基本面→周选(含环境段)→全流程→解禁 | ✅ | 2026-09-19 合并 4→1 |
+
+
+| 10:30(六) | `saturday-mega` | `saturday_mega.sh` | 周六组合日：美股持仓→推荐池周报 | ✅ | 2026-09-19 合并 2→1 |
 
 ## 纯 Prompt 任务（Hermes Agent）
 
@@ -94,4 +94,4 @@
 - **手工验证必须留痕**：任何手动触发的验证必须 tee 到 cron/output/manual-verification-<日期>/ 或写入 heartbeat detail——不留档的验证视为未发生（2026-09-18 治理瑕疵整改）。禁止手工验证后不留任何产物。
 - **新 job 上线必须声明 consumer**：输出被谁消费（哪个脚本读/进哪条推送/写哪张表）。填不出 consumer 不许上线。
 - **本轮 Census 处置**：intraday-minute 改挂 intraday_cache.py（修复分钟数据断供，*/15→每日4次）；check-drawdown-weekly 停用（被 risk-guard+scorecard 覆盖）；recommendation-pool-weekly 实测已自愈（95只/93.3%，审计证据过时）保留；lhb/sentiment/news 暂保留（P2 合并待周一验收后执行）。
-- **爆炸半径教训**：33 个独立部署单元=33 个"修 A 破 B"风险点。瘦身到 ~20 个的目标在周一验收后继续。周末已执行方案A（CHANGE-035）+ 收盘快照合并（CHANGE-037）：jobs 34 total/28 enabled/6 paused。剩余工单：周末链保守合并（screener/pipeline/fundamental 数据任务不同不强塞）、hot-sector 观察池互通（降级解决不了，暂缓）、物理删除 paused（等周一 11 项验收全过）。
+- **爆炸半径教训**：33 个独立部署单元=33 个"修 A 破 B"风险点。Census 目标 ~20 已达成：jobs 24 total/24 enabled/0 paused（CHANGE-039 周末收尾）。物理删除 12 个已合并 job（归档 jobs.json.archived-paused-20260919 可恢复）。hot-sector 保留（health_check 板块强度检查是其 consumer）。待办：IMA skill 1.1.10 更新、fetch_financial timeout 600s 评估。

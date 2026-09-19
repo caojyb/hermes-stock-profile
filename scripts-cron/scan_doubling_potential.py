@@ -255,7 +255,11 @@ def main():
         # 推送飞书告警（静默失败不影响主流程）
         try:
             import urllib.request, os
-            token = os.environ.get("FEISHU_WEBHOOK_TOKEN", "")
+            # 2026-09-19: 全局禁推（独立 webhook 不经 feishu_sender._post, 需本地加门）
+            if os.environ.get("FEISHU_DISABLE") == "1":
+                print("[INFO] FEISHU_DISABLE=1，跳过K线停更告警推送")
+            else:
+                token = os.environ.get("FEISHU_WEBHOOK_TOKEN", "")
             if not token:
                 for line in open("/home/caojy/.hermes/profiles/stock/scripts/cron/stock_opportunity_scan.py", encoding="utf-8"):
                     if "FEISHU_TOKEN" in line and "=" in line and "os.environ" not in line:

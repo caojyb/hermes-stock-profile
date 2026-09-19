@@ -435,6 +435,11 @@ TRACK_JSON = os.path.join(RECOMMEND_TRACK_DIR, "opportunity_track_latest.json")
 
 # ── 发飞书消息 ────────────────────────────────────────────
 def send_feishu(text):
+    # 2026-09-19: 全局禁推（独立 webhook 不经 feishu_sender._post, 需本地加门）
+    import os as _os
+    if _os.environ.get("FEISHU_DISABLE") == "1":
+        print("[INFO] FEISHU_DISABLE=1，跳过飞书推送\n" + text)
+        return
     if not FEISHU_TOKEN:
         print(text)
         return
