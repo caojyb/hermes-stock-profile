@@ -40,6 +40,17 @@ def _get_token() -> str:
 
 def _post(path: str, body: dict, token: Optional[str] = None) -> dict:
     """通用 POST 请求"""
+    # 2026-09-19: 全局禁推开关（手工验证/合并快照调用时用，一处修复覆盖全部调用方）
+    # 原 lhb_monitor 单独打补丁，但 14 个脚本都有内部直推——在唯一出口 _post 加门
+    import os as _os
+    if _os.environ.get("FEISHU_DISABLE") == "1":
+        text_preview = ""
+        try:
+            text_preview = json.loads(body.get("content", "{}")).get("text", "")[:60]
+        except Exception:
+            pass
+        return {"code": 0, "msg": "FEISHU_DISABLE=1 (skipped)", "skipped": True,
+                "preview": text_preview}
     if token is None:
         token = _get_token()
     data = json.dumps(body, ensure_ascii=False).encode()

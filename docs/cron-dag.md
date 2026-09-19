@@ -2,7 +2,7 @@
 
 ## 概述
 
-股票系统 Cron 任务调度图。当前共 **33 个 job**（30 enabled + 3 paused），按触发时机分为日间链和周链。
+股票系统 Cron 任务调度图。当前共 **34 个 job**（28 enabled + 6 paused），按触发时机分为日间链和周链。
 
 ## 日间链（交易日）
 
@@ -17,9 +17,7 @@
 | */30 9-11,13-15 | `stock-opportunity-push` | `stock_opportunity_scan.py` | 翻倍潜力扫描（含尾盘 15:00） | ✅ | 活跃 |
 | */15 9-14 | `stock-intraday-minute` | `intraday_monitor.py` | 盘中监控（脚本内交易时段守卫，午休/盘后跳过） | 信号✅ | 活跃 |
 | 11:30(六) | `stock-recommendation-pool-weekly` | `weekly_pool_report.sh` | 推荐池周报 | ✅ | 活跃 |
-| 15:30 | `daily-sentiment-report` | `sentiment_thermo.sh` | 情绪温度计 | ✅ | 活跃 |
-| 15:35 | `stock-lhb-daily` | `lhb_monitor.py` | 龙虎榜数据 + 候选池关联 | ✅ | 活跃 |
-| 15:40 | `stock-news-sentiment-pilot` | `news_sentiment.py` | AI 新闻解读 | ✅ | 活跃 |
+| 15:35 | `closing-snapshot` | `closing_snapshot.sh` | 收盘快照（情绪+龙虎榜+舆情三合一，FEISHU_DISABLE 全局禁推子脚本） | ✅ | 2026-09-19 合并 sentiment/lhb/news |
 | 16:30 | `stock-market-cache-refresh` | `market_cache_refresh.sh` | 全市场K线增量刷新 | 失败✅ | 活跃 |
 | 16:40 | `daily-data-refresh` | `daily_data_refresh.py` | 盘后数据刷新 (K线/财务/龙虎榜) | ❌ | 活跃 |
 | 16:50 | `double-monitor-daily` | `double_monitor.py` | 翻倍策略信号扫描+模拟交易 | ✅ | 活跃 |
@@ -96,4 +94,4 @@
 - **手工验证必须留痕**：任何手动触发的验证必须 tee 到 cron/output/manual-verification-<日期>/ 或写入 heartbeat detail——不留档的验证视为未发生（2026-09-18 治理瑕疵整改）。禁止手工验证后不留任何产物。
 - **新 job 上线必须声明 consumer**：输出被谁消费（哪个脚本读/进哪条推送/写哪张表）。填不出 consumer 不许上线。
 - **本轮 Census 处置**：intraday-minute 改挂 intraday_cache.py（修复分钟数据断供，*/15→每日4次）；check-drawdown-weekly 停用（被 risk-guard+scorecard 覆盖）；recommendation-pool-weekly 实测已自愈（95只/93.3%，审计证据过时）保留；lhb/sentiment/news 暂保留（P2 合并待周一验收后执行）。
-- **爆炸半径教训**：33 个独立部署单元=33 个"修 A 破 B"风险点。瘦身到 ~20 个的目标在周一验收后继续。周末已执行方案A（用户 2026-09-19 拍板）：freshness→cache-health、env-report→周选报，jobs 33 total/30 enabled/3 paused，见 CHANGE-2026-09-19-035。
+- **爆炸半径教训**：33 个独立部署单元=33 个"修 A 破 B"风险点。瘦身到 ~20 个的目标在周一验收后继续。周末已执行方案A（CHANGE-035）+ 收盘快照合并（CHANGE-037）：jobs 34 total/28 enabled/6 paused。剩余工单：周末链保守合并（screener/pipeline/fundamental 数据任务不同不强塞）、hot-sector 观察池互通（降级解决不了，暂缓）、物理删除 paused（等周一 11 项验收全过）。

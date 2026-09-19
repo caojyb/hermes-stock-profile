@@ -270,10 +270,14 @@ def run(trade_date=None, pool=None, weekly=False):
     print(report)
 
     # 发飞书推送
+    # 2026-09-19: FEISHU_DISABLE=1 禁推（手工验证/合并快照调用时用，避免污染群）
     try:
         from feishu_sender import feishu_send_message
-        result = feishu_send_message(report)
-        print(f"[INFO] 飞书发送结果: code={result.get('code')}, msg={result.get('msg')}", file=sys.stderr)
+        if os.environ.get('FEISHU_DISABLE') == '1':
+            print('[INFO] FEISHU_DISABLE=1，跳过飞书推送（内容已输出到 stdout）', file=sys.stderr)
+        else:
+            result = feishu_send_message(report)
+            print(f"[INFO] 飞书发送结果: code={result.get('code')}, msg={result.get('msg')}", file=sys.stderr)
     except Exception as e:
         print(f"[WARN] 龙虎榜飞书发送失败: {e}", file=sys.stderr)
     

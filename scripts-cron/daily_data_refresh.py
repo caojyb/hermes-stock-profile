@@ -110,14 +110,19 @@ def fetch_northbound_batch():
 # ======================== 东方财富 MCP ========================
 
 def fetch_main_fund_rank(date_str):
-    """获取主力资金净流入排行（东方财富 push2）"""
+    """获取主力资金净流入排行（东方财富 push2delay）
+
+    2026-09-19 修复: 原 endpoint push2.eastmoney.com(http) 整站不可达（curl 000），
+    导致主力资金链路双重失败（东财断连 + westock data_client 缺失），
+    main_fund_flow 表静默停更。改用 push2delay.eastmoney.com(https)——
+    与 sentiment_thermo/hot_sector_scanner 同源（stock-data-fetch-troubleshooting 条目16 记录的可用端点）。
+    """
     import requests
-    url = 'http://push2.eastmoney.com/api/qt/clist/get'
+    url = 'https://push2delay.eastmoney.com/api/qt/clist/get'
     params = {
         'pn': 1, 'pz': 100, 'po': 1, 'np': 1,
-        'ut': 'bd1d9ddb04089700cf9c27f6f7426281',
         'fltt': 2, 'invt': 2, 'fid': 'f62',
-        'fs': 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23',
+        'fs': 'm:0+t:6,m:0+t:13,m:0+t:80,m:1+t:2,m:1+t:23,m:1+t:8',
         'fields': 'f12,f14,f62,f184'
     }
     try:
@@ -459,6 +464,13 @@ def refresh_main_fund_flow(date_str):
 
 
 def _westock_client():
+    # 2026-09-19: data_client 在 skills/stock/stock-data-sources/lib/，显式注入 sys.path
+    # （原实现直接 from data_client import 必 ModuleNotFoundError，兜底通道形同虚设）
+    import sys as _sys
+    from pathlib import Path as _Path
+    _lib = str(_Path(__file__).resolve().parents[2] / 'skills' / 'stock' / 'stock-data-sources' / 'lib')
+    if _lib not in _sys.path:
+        _sys.path.insert(0, _lib)
     from data_client import get_client
     return get_client()
 
