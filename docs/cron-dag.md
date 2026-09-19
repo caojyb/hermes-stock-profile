@@ -25,7 +25,7 @@
 | 16:50 | `double-monitor-daily` | `double_monitor.py` | 翻倍策略信号扫描+模拟交易 | ✅ | 活跃 |
 | 17:10 | `deep-position-review` | (agent) | 持仓深度综合诊断 | ✅ | 2026-09-18 从16:50挪出避让 |
 | 17:30 | `track-outcomes-daily` | `track_outcomes.py` | 推荐结果 outcome 回写 | 异常✅ | 2026-09-18 限交易日 |
-| 17:50 | `check-market-cache-health` | `check_market_cache_health.py` | 健康检查 3 项 + 关键表新鲜度 4 项（freshness 已并入） | 异常✅ | 2026-09-19 合并 freshness |
+| 17:50 | `check-market-cache-health` | `check_market_cache_health.py` | 健康检查 3 项（最近一次刷新语义）+ 关键表新鲜度 4 项 | 异常✅ | 2026-09-19 语义修正：与是否交易日无关 |
 | ~~17:55~~ | ~~`table-freshness-check`~~ | — | 已并入 17:50 check-market-cache-health（Census 合并#1，2026-09-19） | — | paused |
 | 17:35 | `verification-scorecard` | `verification_scorecard.py` | 验证期记分牌（Day/样本/tripwire/到期判定草案） | 每日✅ | 2026-09-18 新增（七轮） |
 

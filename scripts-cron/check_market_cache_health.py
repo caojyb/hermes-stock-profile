@@ -50,73 +50,83 @@ def send_feishu(msg: str):
         print(f"[WARN] 飞书发送失败: {e}")
 
 
-# ── A. market_cache 刷新健康（原 3 项，未改动） ──────────────────────────
-
-def _is_trading_day() -> bool:
-    """今天是否 A 股交易日（exchange_holidays 排除节假日）。
-
-    A 组检查（数量/日志/duration）语义上是"今日盘后刷新是否正常"，
-    周末/节假日天然无刷新——不判定会误报（周六实测 K 线 0 只/无日志/无执行记录三条假警）。
-    """
-    try:
-        from exchange_holidays import is_trading_calendar_day
-        return is_trading_calendar_day(date.today())
-    except Exception:
-        return date.today().weekday() < 5
-
+# ── A. market_cache 刷新健康（2026-09-19 语义修正：today → 最近一次刷新） ─────────
+#
+# 修正说明（用户 2026-09-19 指出，原实现是错的）：
+#   原实现三项都按 date=today 查——周末/节假日必然查空，要么误报要么被迫加交易日守卫跳过。
+#   但股票数据系统与是否交易日无关：非交易日的"最新数据"就是上一交易日收盘的实时数据，
+#   检查应该对"系统最新状态是否健康"下结论，而不是对"今天有没有干活"下结论。
+#   修正后三项全部改查"最近一次刷新"的客观状态，任何一天跑都能得出正确结论。
 
 def check_klines_count() -> tuple[bool, str]:
-    """检查今天 klines 数量是否 > 5000"""
-    if not _is_trading_day():
-        return True, "⏸ 非交易日，跳过 K线数量检查"
+    """检查最新一期 klines 的股票数是否 > 5000（不限定今天）"""
     try:
         conn = sqlite3.connect(MARKET_DB, timeout=60)
         cur = conn.cursor()
-        today = date.today().isoformat()
-        cur.execute("SELECT COUNT(DISTINCT code) FROM klines WHERE date = ?", (today,))
+        cur.execute("SELECT MAX(date) FROM klines")
+        latest = cur.fetchone()[0]
+        if not latest:
+            conn.close()
+            return False, "🚨 klines 表为空"
+        cur.execute("SELECT COUNT(DISTINCT code) FROM klines WHERE date = ?", (latest,))
         count = cur.fetchone()[0]
         conn.close()
         if count > 5000:
-            return True, f"✅ 今日K线股票数: {count}"
+            return True, f"✅ 最新K线({latest})股票数: {count}"
         else:
-            return False, f"⚠️ 今日K线股票数仅 {count}（预期 >5000）"
+            return False, f"⚠️ 最新K线({latest})股票数仅 {count}（预期 >5000）"
     except Exception as e:
         return False, f"❌ K线数量检查失败: {e}"
 
 
-def check_market_cache_log() -> tuple[bool, str]:
-    """检查日志中今天是否有 stocks 列表长度日志"""
-    if not _is_trading_day():
-        return True, "⏸ 非交易日，跳过 market_cache 日志检查"
-    if not LOG_FILE.exists():
-        return False, f"⚠️ 日志文件不存在: {LOG_FILE}"
+def _latest_stocks_count() -> tuple:
+    """从最近一次 market_cache 刷新记录里取 stocks 列表长度。
 
+    双源（按优先级）：
+    1. cron/output/a6a60497fbb6/*.md 存档——wrapper 用 MARKET_CACHE_QUIET=1 后
+       `待更新 stocks=` 行走 _qprint 被静默，只进 cron 投递存档，不落 ~/.hermes/logs
+    2. ~/.hermes/logs/market_cache_refresh.log——非 quiet 路径的兜底
+    返回 (stocks数 或 None, 来源文件路径 或 None)
+    """
+    import glob
+    output_dir = BASE_DIR / 'cron' / 'output' / 'a6a60497fbb6'
+    # 源1: 投递存档（排除 latest.md 累积文件，按时间戳文件名取最新）
     try:
-        content = LOG_FILE.read_text()
-        today = date.today().isoformat()
-        # 查找今天的日志
-        today_pattern = re.compile(rf'{today}.*?待更新 stocks=(\d+)', re.DOTALL)
-        matches = today_pattern.findall(content)
+        files = sorted(glob.glob(str(output_dir / '2026-*.md')), reverse=True)
+        for f in files[:5]:
+            content = Path(f).read_text(errors='replace')
+            m = re.findall(r'待更新 stocks=(\d+)', content)
+            if m:
+                return int(m[-1]), f
+    except Exception:
+        pass
+    # 源2: 日志文件
+    try:
+        if LOG_FILE.exists():
+            content = LOG_FILE.read_text(errors='replace')
+            m = re.findall(r'待更新 stocks=(\d+)', content)
+            if m:
+                return int(m[-1]), str(LOG_FILE)
+    except Exception:
+        pass
+    return None, None
 
-        if not matches:
-            return False, f"⚠️ 今日无 market_cache 日志（可能未执行）"
 
-        # 取最后一次的 stocks 数
-        last_stocks = int(matches[-1])
-        if last_stocks > 5000:
-            return True, f"✅ 今日 stocks 列表长度: {last_stocks}"
-        elif last_stocks > 0:
-            return False, f"⚠️ 今日 stocks 列表长度仅 {last_stocks}（预期 >5000）"
-        else:
-            return False, f"🚨 今日 stocks 列表为空（可能 DB_PATH 切换或数据异常）"
-    except Exception as e:
-        return False, f"❌ 日志检查失败: {e}"
+def check_market_cache_log() -> tuple[bool, str]:
+    """检查最近一次刷新的 stocks 列表长度是否 > 5000（不限定今天）"""
+    stocks, src = _latest_stocks_count()
+    if stocks is None:
+        return False, "⚠️ 未找到任何 stocks 列表记录（market_cache 可能从未成功刷新）"
+    if stocks > 5000:
+        return True, f"✅ 最近刷新 stocks 列表长度: {stocks}（{Path(src).name}）"
+    elif stocks > 0:
+        return False, f"⚠️ 最近刷新 stocks 列表长度仅 {stocks}（预期 >5000）"
+    else:
+        return False, f"🚨 最近刷新 stocks 列表为空（可能 DB_PATH 切换或数据异常，{src}）"
 
 
 def check_duration() -> tuple[bool, str]:
-    """检查 executions.db 中今天 market_cache 的 duration"""
-    if not _is_trading_day():
-        return True, "⏸ 非交易日，跳过 duration 检查"
+    """检查最近一次 market_cache 刷新的 duration（不限定今天）"""
     try:
         executions_db = BASE_DIR / 'cron' / 'executions.db'
         if not executions_db.exists():
@@ -124,29 +134,29 @@ def check_duration() -> tuple[bool, str]:
 
         conn = sqlite3.connect(executions_db, timeout=60)
         cur = conn.cursor()
-        today = date.today().isoformat()
-        # 查找今天的 market_cache 任务
+        # 最近一次 market_cache 执行（含失败——失败的 duration 恰好是假成功信号）
         cur.execute("""
-            SELECT job_id, strftime('%s', finished_at) - strftime('%s', started_at) as duration_sec
+            SELECT status, strftime('%s', finished_at) - strftime('%s', started_at) as duration_sec,
+                   DATE(claimed_at)
             FROM executions
             WHERE job_id = 'a6a60497fbb6'
-              AND DATE(claimed_at) = ?
+              AND finished_at IS NOT NULL
             ORDER BY claimed_at DESC LIMIT 1
-        """, (today,))
+        """)
         row = cur.fetchone()
         conn.close()
 
         if not row:
-            return False, "⚠️ 今日无 market_cache 执行记录"
+            return False, "⚠️ 无 market_cache 执行记录"
 
-        job_id, duration_sec = row
+        status, duration_sec, run_date = row
         if duration_sec is None:
             return False, "⚠️ market_cache duration 为 NULL"
 
         if duration_sec > 100:
-            return True, f"✅ market_cache duration: {duration_sec}s"
+            return True, f"✅ 最近刷新({run_date}, {status}) duration: {duration_sec}s"
         else:
-            return False, f"⚠️ market_cache duration 仅 {duration_sec}s（预期 >100s，可能假成功）"
+            return False, f"⚠️ 最近刷新({run_date}, {status}) duration 仅 {duration_sec}s（预期 >100s，可能假成功）"
     except Exception as e:
         return False, f"❌ duration 检查失败: {e}"
 
@@ -183,19 +193,28 @@ def check_table_freshness() -> tuple[bool, str]:
     except Exception as e:
         return False, f"❌ 新鲜度检查失败: 无法连接数据库 {e}"
 
-    # 交易日判断: 17:50 跑在交易日，此时 klines 应为当日
+    # 交易日判断: 决定 klines 的期望新鲜度
+    # 语义（用户 2026-09-19 修正）: 检查"系统最新状态"而非"今天有没有干活"——
+    #   交易日: klines 应为当日（滞后 ≥1 天即警，refresh 挂了的次日信号全吃旧数据）
+    #   周末/节假日: 最新数据=上一交易日收盘，滞后 = 距上一交易日的天数，
+    #              跨过一个完整周末滞后 2-3 天是正常态，阈值放宽到 3 天
     try:
         from exchange_holidays import is_trading_calendar_day
-        klines_expected_today = is_trading_calendar_day(today)
+        trading_today = is_trading_calendar_day(today)
     except Exception:
-        klines_expected_today = today.weekday() < 5
+        trading_today = today.weekday() < 5
+    if trading_today:
+        klines_max_lag = 0
+    else:
+        # 非交易日: 周一 lag=3(周五数据)、周日 lag=2、周六 lag=1 均正常 → 阈值 3
+        klines_max_lag = 3
 
     alerts = []
     ok_lines = []
     checks = []
     for table, col, kind, max_lag, desc in FRESHNESS_CHECKS:
         if table == 'klines':
-            checks.append((table, col, kind, 0 if klines_expected_today else None, desc))
+            checks.append((table, col, kind, klines_max_lag, desc))
         else:
             checks.append((table, col, kind, max_lag, desc))
 
