@@ -14,7 +14,7 @@
 | 08:30 | `lint-db-paths` | `lint_no_hardcoded_db.sh` | 硬编码 DB 路径检查 | 失败时✅ | 活跃 |
 | 09:35 | `position-stop-loss-alert` | `position_stop_loss_alert.py` | 真实持仓统一决策（止损/仓位建议，质量守卫硬失败） | 非HOLD✅ | 活跃 |
 | 10:00 | `hot-sector-scanner` | `hot_sector_scanner.py` | 热点板块扫描 | ✅ | 活跃 |
-| */30 9-11,13-15 | `stock-opportunity-push` | `stock_opportunity_scan.py` | 翻倍潜力扫描（含尾盘 15:00） | ✅ | 活跃 |
+| */30 9-11,13-15 | `stock-opportunity-push` | `stock_opportunity_scan.py` | 翻倍潜力扫描（当日已推折叠为"持续关注"行, 2026-09-19 B1 去重） | ✅ | 活跃 |
 | */15 9-14 | `stock-intraday-minute` | `intraday_monitor.py` | 盘中监控（脚本内交易时段守卫，午休/盘后跳过） | 信号✅ | 活跃 |
 | 11:30(六) | `stock-recommendation-pool-weekly` | `weekly_pool_report.sh` | 推荐池周报 | ✅ | 活跃 |
 | 15:35 | `closing-snapshot` | `closing_snapshot.sh` | 收盘快照（情绪+龙虎榜+舆情三合一，FEISHU_DISABLE 全局禁推子脚本） | ✅ | 2026-09-19 合并 sentiment/lhb/news |
@@ -94,4 +94,4 @@
 - **手工验证必须留痕**：任何手动触发的验证必须 tee 到 cron/output/manual-verification-<日期>/ 或写入 heartbeat detail——不留档的验证视为未发生（2026-09-18 治理瑕疵整改）。禁止手工验证后不留任何产物。
 - **新 job 上线必须声明 consumer**：输出被谁消费（哪个脚本读/进哪条推送/写哪张表）。填不出 consumer 不许上线。
 - **本轮 Census 处置**：intraday-minute 改挂 intraday_cache.py（修复分钟数据断供，*/15→每日4次）；check-drawdown-weekly 停用（被 risk-guard+scorecard 覆盖）；recommendation-pool-weekly 实测已自愈（95只/93.3%，审计证据过时）保留；lhb/sentiment/news 暂保留（P2 合并待周一验收后执行）。
-- **爆炸半径教训**：33 个独立部署单元=33 个"修 A 破 B"风险点。Census 目标 ~20 已达成：jobs 24 total/24 enabled/0 paused（CHANGE-039 周末收尾）。物理删除 12 个已合并 job（归档 jobs.json.archived-paused-20260919 可恢复）。hot-sector 保留（health_check 板块强度检查是其 consumer）。CHANGE-040 已清两项待办：IMA skill 1.1.10 更新完成（kb_sync 推送恢复）、fetch_financial 改 8 线程+800只/批+游标续跑（stocks 表内过期 0 只）。
+- **爆炸半径教训**：33 个独立部署单元=33 个"修 A 破 B"风险点。Census 目标 ~20 已达成：jobs 24 total/24 enabled/0 paused（CHANGE-039 周末收尾）。物理删除 12 个已合并 job（归档 jobs.json.archived-paused-20260919 可恢复）。hot-sector 保留（health_check 板块强度检查是其 consumer）。CHANGE-040/041 已清全部待办：IMA 1.1.10 更新、fetch_financial 分批、B1 推送去重（7条/日→1+1行）、C1 死模型配置删除+C2 fallback 配置、锁清理（32 fire-lock+3 陈锁+πthon 软链）。archive 4.4G 保留（dedup/reset 前快照, 外置冷存待确认设备）。

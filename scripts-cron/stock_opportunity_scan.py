@@ -687,6 +687,30 @@ if __name__ == "__main__":
         else:
             new_alerts.append(a)
 
+    # ── 2026-09-19 B1 修复: 当日已推去重（P1, "每天同一批推7次"的真正根因）──
+    # 原实现: new_alerts = 非持仓即"新候选"——每轮推送把同一批股票反复当新信号推。
+    # 修复: 查当日推荐池已推送(code)集合, 已推过的从新候选折叠为一行"持续关注"提要;
+    #       持仓内信号不受影响（持仓状态变化本身值得每轮播报, 且 stop-loss 链依赖它）。
+    already_pushed_today = set()
+    try:
+        import sqlite3 as _sq
+        from datetime import date as _date
+        _conn = _sq.connect(POOL_DB, timeout=30)
+        _rows = _conn.execute(
+            "SELECT DISTINCT code FROM recommendations WHERE entry_date = ?",
+            (_date.today().isoformat(),)).fetchall()
+        already_pushed_today = {r[0] for r in _rows}
+        _conn.close()
+    except Exception as _e:
+        print(f"[WARN] 当日已推查询失败（去重降级为不过滤）: {_e}")
+    fresh_alerts = [a for a in new_alerts if a["code"] not in already_pushed_today]
+    repeat_alerts = [a for a in new_alerts if a["code"] in already_pushed_today]
+    if repeat_alerts:
+        _names = '、'.join(f"{a['name']}({a['code']})" for a in repeat_alerts[:10])
+        _more = f" 等{len(repeat_alerts)}只" if len(repeat_alerts) > 10 else ""
+        print(f"[去重] 当日已推 {len(repeat_alerts)} 只折叠为持续关注: {_names}{_more}")
+    new_alerts = fresh_alerts
+
     # 发飞书（P1-4 三级标签: 有持仓信号=[行动]，仅新候选=[关注]）
     stamp = datetime.now().strftime('%H:%M')
     if holding_alerts:
@@ -742,6 +766,14 @@ if __name__ == "__main__":
         lines.append(f"⛔ 基本面过滤排除 {len(rejected)} 只（仅展示前5）：")
         for r in rejected_names[:5]:
             lines.append(f"  - {r}")
+
+    # ── 2026-09-19 B1: 当日已推候选折叠为一行提要（不静默丢弃——用户可见"这些还在信号池"）──
+    if repeat_alerts:
+        _rnames = '、'.join(f"{a['name']}({a['code']})" for a in repeat_alerts[:10])
+        if len(repeat_alerts) > 10:
+            _rnames += f" 等{len(repeat_alerts)}只"
+        lines.append("")
+        lines.append(f"🔁 持续关注（今日已推, 不再重复）: {_rnames}")
 
     send_feishu("\n".join(lines))
 

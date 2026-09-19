@@ -52,10 +52,10 @@ def update_prices():
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     today = date.today().isoformat()
 
-    # 获取所有active的推荐
+    # 获取所有active的推荐（含 notes——2026-09-19 B1: 更新时保留推送链元数据）
     cur.execute("""
         SELECT id, code, entry_price, stop_loss, take_profit_1, take_profit_2,
-               entry_date, hold_days_max
+               entry_date, hold_days_max, notes
         FROM recommendations
         WHERE status = 'active'
     """)
@@ -63,7 +63,7 @@ def update_prices():
     updated = 0
     for row in cur.fetchall():
         (id_, code, entry_price, stop_loss, tp1, tp2,
-         entry_date, hold_days_max) = row
+         entry_date, hold_days_max, row_notes) = row
 
         # 从缓存或实时获取价格
         price = get_price_from_cache(code)
@@ -92,6 +92,12 @@ def update_prices():
             status = 'expired'
             notes = f'超时持有{days_held}天, +{pnl_pct:.1f}%'
 
+        # 2026-09-19 B1 修复: notes 追加式保留（原整列重写抹掉推送链元数据
+        # source=intraday_scan/score, 导致当日去重查询失效——与 recommendation_pool.py
+        # 6bccef7 同款修法: 状态描述放前面, 原 notes 拼后面）
+        _orig_notes = str(row_notes or '').strip()
+        if _orig_notes:
+            notes = f"{notes} | {_orig_notes}" if notes else _orig_notes
         cur.execute("""
             UPDATE recommendations SET
                 current_price = ?, days_held = ?, pnl_pct = ?,
