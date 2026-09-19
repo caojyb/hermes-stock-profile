@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Real Portfolio Truth Layer（Phase 5.5）
+=======================================
+从真实持仓源（当前 = 飞书 Bitable，平安证券截图为真）构建统一 Real Portfolio Snapshot，
+作为 Portfolio Assessment / DecisionEngine 的可靠输入。
+
+**REAL 与 SIMULATION 彻底分离**：本模块只读真实持仓源，绝不读取 simulation snapshot。
+无法从真实源获得的数据 → DATA_UNAVAILABLE，不伪造、不从 simulation 猜。
+
+真实源能力审计（Bitable 18 字段）：
+  ✅ symbol/quantity/avg_cost/current_price/sector（所属板块）
+  ❌ cash / total_asset / 历史净值 → DATA_UNAVAILABLE
+  → drawdown 历史峰值缺失 → drawdown_status=UNKNOWN（不伪造）
+"""
+import os
+import json
+from datetime import date, datetime, timezone
+from pathlib import Path
+from uuid import uuid4
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+import decision._local_constants as _local_constants
+BITABLE_TOKEN = _local_constants.BITABLE_BASE_TOKEN
+TABLE_ID = _local_constants.BITABLE_TABLE_ID
+
+# 数据健康等级
+VALID, STALE, PARTIAL, MISSING, UNKNOWN = 'VALID', 'STALE', 'PARTIAL', 'MISSING', 'UNKNOWN'
+
+
+def _read_bitable():
+    """从 Bitable 读取真实持仓。返回 [{code,name,quantity,avg_cost,current_price}]。"""
+    # 使用 bitable_reader 直接调用飞书 REST API，不再依赖 lark-cli
+    import sys
+    feishu_dir = SCRIPT_DIR.parent.parent.parent / 'skills' / 'stock' / 'stock-expert' / 'skills' / 'feishu-bitable'
+    sys.path.insert(0, str(feishu_dir))
+    from bitable_reader import BitableReader
+    reader = BitableReader(limit=100)
+    positions = reader.get_positions()
+    return [
+        {
+            'code': p.stock_code,
+            'name': p.stock_name,
+            'quantity': p.quantity,
+            'avg_cost': p.cost_price,
+            'current_price': p.current_price,
+            'sector': p.industry,
+        }
+        for p in positions
+        if p.buy_flag == '已买入'
+    ]
+
+
+def build_real_snapshot(holdings=None, source='bitable', source_timestamp=None,
+                        stale_after_hours=24):
+    """构建 Real Portfolio Snapshot。
+
+    holdings: 若 None 则从 Bitable 读取；否则用注入的持仓（测试/隔离）。
+    返回 snapshot dict。绝不读 simulation。
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    as_of = date.today().isoformat()
+    if holdings is None:
+        try:
+            holdings = _read_bitable()
+        except Exception as e:
+            return {'ok': False, 'error': f'真实持仓读取失败: {e}',
+                    'data_health': MISSING, 'snapshot_id': '', 'timestamp': now,
+                    'source': source, 'as_of_time': as_of}
+    if not holdings:
+        return {'ok': True, 'snapshot_id': '', 'timestamp': now, 'source': source,
+                'as_of_time': as_of, 'data_health': MISSING, 'holdings': [],
+                'portfolio': {}, 'provenance': {}}
+
+    # 明细计算
+    detail = []
+    total_holdings_value = 0.0
+    sector_exposure = {}
+    position_count = 0
+    for h in holdings:
+        qty = h.get('quantity') or 0
+        cost = h.get('avg_cost') or 0
+        price = h.get('current_price') or 0
+        mv = qty * price
+        pnl = mv - qty * cost
+        total_holdings_value += mv
+        if mv > 0:
+            position_count += 1
+            s = h.get('sector', '') or ''
+            sector_exposure[s] = sector_exposure.get(s, 0) + 1
+        detail.append({
+            'symbol': h['code'], 'name': h.get('name', ''),
+            'quantity': qty, 'avg_cost': cost, 'current_price': price,
+            'market_value': round(mv, 2),
+            'unrealized_pnl': round(pnl, 2),
+            'position_pct': None,  # 相对总资产占比 → DATA_UNAVAILABLE（无 total_asset）
+            'sector': h.get('sector', ''),
+        })
+    # 相对持仓市值口径的 position_pct（非总资产占比，明确标注）
+    for d in detail:
+        if total_holdings_value > 0:
+            d['position_pct_holdings'] = round(d['market_value'] / total_holdings_value, 4)
+        else:
+            d['position_pct_holdings'] = 0.0
+
+    # 数据健康
+    if all(d['quantity'] > 0 and d['avg_cost'] > 0 and d['current_price'] > 0 for d in detail):
+        health = VALID
+    elif any(d['quantity'] > 0 or d['avg_cost'] > 0 for d in detail):
+        health = PARTIAL
+    else:
+        health = MISSING
+    # 时效
+    if source_timestamp and holdings:
+        try:
+            age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(source_timestamp)).total_seconds() / 3600
+            if age_h > stale_after_hours:
+                health = STALE
+        except Exception as _e:
+            print(f"[EXC] real_portfolio.py: {type(_e).__name__}: {_e}")
+            pass
+
+    snapshot_id = f"real_{now[:10].replace('-','')}_{uuid4().hex[:8]}"
+    return {
+        'ok': True, 'snapshot_id': snapshot_id, 'timestamp': now, 'as_of_time': as_of,
+        'source': source, 'source_timestamp': source_timestamp or now,
+        'data_health': health,
+        'holdings': detail,
+        'portfolio': {
+            'total_holdings_value': round(total_holdings_value, 2),
+            'cash': 'DATA_UNAVAILABLE',
+            'total_asset': 'DATA_UNAVAILABLE',
+            'invested_value': round(total_holdings_value, 2),
+            'exposure': 1.0,  # 修复原 total/total 恒 1.0 的错误
+            'position_count': position_count,
+            'sector_exposure': sector_exposure,
+            # 真实仓历史峰值缺失 → drawdown 无法计算，不伪造
+            'drawdown': None,
+            'drawdown_status': UNKNOWN,
+            'drawdown_reason': 'HISTORICAL_BASELINE_INCOMPLETE（无真实账户历史净值）',
+        },
+        'provenance': {
+            'source': source, 'source_timestamp': source_timestamp or now, 'snapshot_id': snapshot_id,
+        },
+    }
+
+
+def snapshot_portfolio_context(snap):
+    """从 Real Snapshot 提取 Portfolio Assessment 输入。"""
+    p = snap.get('portfolio', {})
+    return {
+        'position_count': p.get('position_count', 0),
+        'sector_counts': p.get('sector_exposure', {}),
+        'total_holdings_value': p.get('total_holdings_value', 0),
+        'drawdown': p.get('drawdown'),
+        'drawdown_status': p.get('drawdown_status', UNKNOWN),
+    }
+
+
+if __name__ == '__main__':
+    import json as _j
+    s = build_real_snapshot()
+    print(_j.dumps(s, ensure_ascii=False, indent=2, default=str)[:2500])

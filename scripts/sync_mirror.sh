@@ -63,6 +63,51 @@ sync_cron() {
     return $drift
 }
 
+# 2026-09-19: decision/ 包进镜像（前九轮治理核心: user_authority /
+# validation_integrity_gate / engine / execution / 36 个回归测试）。
+# 排除运行时产物: __pycache__ / *.db / snapshots / executions / outcomes /
+# reports / logs / .pytest_cache / *.json 状态文件。
+sync_decision() {
+    local drift=0
+    local src="$CRON_SRC/decision"
+    local dst="$CRON_DST/decision"
+    [ -d "$src" ] || { echo "✓ scripts-cron/decision 不存在（跳过）"; return 0; }
+    mkdir -p "$dst"
+    local content_diff
+    content_diff=$(rsync -rcn --out-format='%n' \
+        --include='*/' --include='*.py' \
+        --exclude='__pycache__' --exclude='*.pyc' --exclude='*.db' \
+        --exclude='snapshots/' --exclude='executions/' --exclude='outcomes/' \
+        --exclude='reports/' --exclude='logs/' --exclude='.pytest_cache' \
+        --exclude='*.json' --exclude='*' \
+        "$src/" "$dst/" 2>/dev/null | grep -v '/$' || true)
+    if [ -n "$content_diff" ]; then
+        drift=1
+        echo "⇋ scripts-cron/decision 漂移:"
+        echo "$content_diff" | sed 's/^/    /'
+        if [ "$CHECK_ONLY" -eq 0 ]; then
+            rsync -rc --delete-excluded --prune-empty-dirs --out-format='%n' \
+                --include='*/' --include='*.py' \
+                --exclude='__pycache__' --exclude='*.pyc' --exclude='*.db' \
+                --exclude='snapshots/' --exclude='executions/' --exclude='outcomes/' \
+                --exclude='reports/' --exclude='logs/' --exclude='.pytest_cache' \
+                --exclude='*.json' --exclude='*' \
+                "$src/" "$dst/" >/dev/null 2>&1
+            # 清理 --check 阶段预建的 __pycache__ 空壳（mkdir -p 不产生, 但 rsync 目录遍历会）
+            find "$dst" -type d -name '__pycache__' -empty -delete 2>/dev/null || true
+            # 删除生产侧已不存在的 py（同顶层口径）
+            (cd "$dst" && find . -name '*.py') | while read -r f; do
+                [ -f "$src/${f#./}" ] || rm "$dst/${f#./}"
+            done
+            echo "  → 已同步 decision/ → 镜像"
+        fi
+    else
+        echo "✓ scripts-cron/decision IN-SYNC"
+    fi
+    return $drift
+}
+
+
 sync_skill() {
     local drift=0
     local content_diff
@@ -90,6 +135,7 @@ cd "$REPO" || exit 2
 drift_total=0
 
 sync_cron   || drift_total=1
+sync_decision || drift_total=1
 sync_skill  || drift_total=1
 
 if [ "$CHECK_ONLY" -eq 1 ]; then

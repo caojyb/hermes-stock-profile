@@ -16,16 +16,25 @@ from typing import Optional, List, Dict
 
 # Bootstrap for stock-work root
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_STOCK_WORK_ROOT = os.path.abspath(os.path.join(_HERE, '..', '..', '..'))
+_STOCK_WORK_ROOT = os.path.abspath(os.path.join(_HERE, '..', '..'))
 if _STOCK_WORK_ROOT not in sys.path:
     sys.path.insert(0, _STOCK_WORK_ROOT)
 
 # Actual forward_outcome module path
-_FORWARD_OUTCOME_DIR = os.path.join(_STOCK_WORK_ROOT, 'scripts', 'cron', 'research')
-if _FORWARD_OUTCOME_DIR not in sys.path:
-    sys.path.insert(0, _FORWARD_OUTCOME_DIR)
-
-import forward_outcome as forward_outcome  # noqa: E402
+# 2026-09-19: 原 '..','..','.. 上溯到 profile root（错——core/research 只需两级到
+# stock-work root）, 拼出的 scripts/cron/research 不存在 → 平铺 import 必挂。
+# forward_outcome 在两处存在: stock-work/scripts-cron-mirror? 不——canonical 在
+# profile/scripts/cron/research/（生产树, 已 2026-09-19 从 quarantine 恢复）,
+# stock-work/core/research/forward_outcome.py 是 re-export 兼容层。
+# 优先用 core 包导入（自足, 不依赖外部路径）, 失败再回落外部路径。
+try:
+    from core.research import forward_outcome as forward_outcome  # noqa: E402
+except ImportError:
+    _FORWARD_OUTCOME_DIR = os.path.join(
+        os.path.abspath(os.path.join(_HERE, '..', '..', '..')), 'scripts', 'cron', 'research')
+    if _FORWARD_OUTCOME_DIR not in sys.path:
+        sys.path.insert(0, _FORWARD_OUTCOME_DIR)
+    import forward_outcome as forward_outcome  # noqa: E402
 
 HORIZONS = forward_outcome.HORIZONS  # (5, 10, 20)
 

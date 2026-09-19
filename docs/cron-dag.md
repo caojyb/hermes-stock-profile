@@ -95,3 +95,25 @@
 - **新 job 上线必须声明 consumer**：输出被谁消费（哪个脚本读/进哪条推送/写哪张表）。填不出 consumer 不许上线。
 - **本轮 Census 处置**：intraday-minute 改挂 intraday_cache.py（修复分钟数据断供，*/15→每日4次）；check-drawdown-weekly 停用（被 risk-guard+scorecard 覆盖）；recommendation-pool-weekly 实测已自愈（95只/93.3%，审计证据过时）保留；lhb/sentiment/news 暂保留（P2 合并待周一验收后执行）。
 - **爆炸半径教训**：33 个独立部署单元=33 个"修 A 破 B"风险点。Census 目标 ~20 已达成：jobs 24 total/24 enabled/0 paused（CHANGE-039 周末收尾）。物理删除 12 个已合并 job（归档 jobs.json.archived-paused-20260919 可恢复）。hot-sector 保留（health_check 板块强度检查是其 consumer）。CHANGE-040/041 已清全部待办：IMA 1.1.10 更新、fetch_financial 分批、B1 推送去重（7条/日→1+1行）、C1 死模型配置删除+C2 fallback 配置、锁清理（32 fire-lock+3 陈锁+πthon 软链）。archive 4.4G 保留（dedup/reset 前快照, 外置冷存待确认设备）。
+
+---
+
+## 2026-09-19 铁律：测试门禁（强制）
+
+**背景**：9/11 清理时决策链 36 个回归测试连同类被关进 `data/quarantine/cleanup_20250911_scripts_cron/`，现役树 0 测试；`phase8b` 测试的 autouse fixture 还会删生产 snapshots。导致前九轮所有修改缺回归保护。
+
+**规则**：
+1. **改动以下模块后，必须全套跑绿才算 COMPLETE**（冒烟从一次性变常态）：
+   - `scripts/cron/decision/`（决策链：engine/execution/user_authority/validation_integrity_gate/风控守卫）
+   - `stock-work/core/`（研究平面，尤其 target_engine / strategy_runner / walk_forward）
+   ```bash
+   # 一条命令跑全套（venv 已装 pytest）
+   cd ~/.hermes/profiles/stock/scripts/cron && \
+     PYTHONPATH=~/stock-work:... ../../.venv/bin/python3 -m pytest decision/ -q --no-header -p no:cacheprovider
+   cd ~/.hermes/profiles/stock/stock-work && \
+     PYTHONPATH=. ../.venv/bin/python3 -m pytest core/research -q --no-header -p no:cacheprovider
+   ```
+2. **baseline（2026-09-19 green）**：decision/ 534 passed + 17 skipped；core/research 214 passed。
+3. **测试隔离纪律**：任何测试不得写生产目录（snapshots/executions/outcomes/reports）。用 monkeypatch 隔离 SNAP_DIR（参考 conftest.isolate_snapshots）；跑完核对 `ls decision/snapshots | wc -l` == 165。
+4. **新测试必须放现役树**（scripts/cron/decision/test_*.py 或 core/**/test_*.py）；禁止再关 quarantine。
+5. **decision/ 已纳入 sync_mirror**（生产→scripts-cron/decision/ 镜像，排除 snapshots/executions/outcomes/reports/__pycache__/*.db/*.json），`--check` 会抓漂移。

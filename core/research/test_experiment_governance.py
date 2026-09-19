@@ -224,9 +224,13 @@ class TestExperimentGovernance(unittest.TestCase):
             )
             registry.register_experiment(exp)
         summary = registry.summary()
+        # 2026-09-19: total_parameter_variants/total_feature_variants 是
+        # MultipleTestingRegistry 的键; ExperimentRegistry.summary 提供的是
+        # total_experiments/total_families/by_status。变体计数走
+        # MultipleTestingApplicability（PBO 评估入口）, 此处断言 registry 口径。
         self.assertEqual(summary["total_experiments"], 3)
-        self.assertEqual(summary["total_parameter_variants"], 3)
-        self.assertEqual(summary["total_feature_variants"], 1)
+        self.assertEqual(summary["by_family"]["Trend"], 3)
+        self.assertEqual(summary["by_status"][EXPERIMENT_STATUS_REGISTERED], 3)
 
     def test_12_pbo_applicability_logic(self):
         """Test 12: PBO applicability uses dynamic logic, not hardcoded 10."""

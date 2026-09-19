@@ -7,6 +7,8 @@ test_strategy_qualification.py — Strategy Qualification Framework Tests
 from __future__ import annotations
 
 import unittest
+
+from core.research.experiment_governance import EXPERIMENT_STATUS_REGISTERED
 from core.research.strategy_qualification import (
     StrategyQualificationEngine,
     StrategyQualificationInput,
@@ -336,11 +338,14 @@ class TestMultipleTestingRegistry(unittest.TestCase):
             experiment_id="exp_001",
             strategy_id="trend_v1",
             strategy_version="v1",
+            strategy_family="Trend",
             parameter_space={"lookback": 60},
             features=["daily_price"],
             target="future_excess_return_5d",
+            target_version="v1",
             research_window={"start": "2020-01-01", "end": "2025-01-01"},
             result_selection="first_valid",
+            status=EXPERIMENT_STATUS_REGISTERED,
         )
         reg.register(rec)
         self.assertEqual(reg.count_total(), 1)
@@ -355,11 +360,14 @@ class TestMultipleTestingRegistry(unittest.TestCase):
                 experiment_id=f"exp_{sid}",
                 strategy_id=sid,
                 strategy_version="v1",
+                strategy_family="Trend",
                 parameter_space={},
                 features=[],
                 target="future_excess_return_5d",
+                target_version="v1",
                 research_window={"start": "2020-01-01", "end": "2025-01-01"},
                 result_selection="first_valid",
+                status=EXPERIMENT_STATUS_REGISTERED,
             ))
         summary = reg.summary()
         self.assertEqual(summary["total_experiments"], 3)
@@ -375,11 +383,14 @@ class TestMultipleTestingRegistry(unittest.TestCase):
                 experiment_id=f"exp_{i:03d}",
                 strategy_id="trend_v1",
                 strategy_version="v1",
+                strategy_family="Trend",
                 parameter_space={},
                 features=[],
                 target="future_excess_return_5d",
+                target_version="v1",
                 research_window={"start": "2020-01-01", "end": "2025-01-01"},
                 result_selection="first_valid",
+                status=EXPERIMENT_STATUS_REGISTERED,
             ))
         summary = reg.summary()
         self.assertTrue(summary["pbo_eligible"])

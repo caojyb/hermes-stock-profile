@@ -24,76 +24,24 @@ def to_westock(code):
     return 'sz' + code
 
 def read_holdings_codes():
-    """直接调用飞书 Bitable REST API 读取真实持仓代码（不再依赖 lark-cli）。"""
-    # 从 ~/.hermes/profiles/stock/.env 读取飞书应用凭证
-    env_path = os.path.expanduser('~/.hermes/profiles/stock/.env')
-    app_id = app_secret = None
-    if os.path.exists(env_path):
-        for line in open(env_path, 'r', encoding='utf-8').readlines():
-            if line.startswith('FEISHU_APP_ID='):
-                app_id = line.split('=', 1)[1].strip()
-            elif line.startswith('FEISHU_APP_SECRET='):
-                app_secret = line.split('=', 1)[1].strip()
-    if not app_id or not app_secret:
-        raise RuntimeError("~/.hermes/profiles/stock/.env 中缺少 FEISHU_APP_ID / FEISHU_APP_SECRET")
+    """真实持仓代码单次读取 —— 委托 unified reader（J0-H: single reader）。
 
-    # 获取 tenant_access_token
-    auth_data = json.dumps({"app_id": app_id, "app_secret": app_secret}).encode()
-    req = urllib.request.Request(
-        "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
-        data=auth_data,
-        headers={"Content-Type": "application/json"},
-    )
+    2026-09-19 P0-fix: 原实现是本文件内独立的一份 Bitable REST 直读
+    （与 decision/real_portfolio_truth._read_bitable_holdings 重复），
+    J0B 测试的 single-reader 断言因此失败。REST 细节收敛到唯一 reader,
+    本函数只做 codes 提取; FAIL CLOSED（reader 不可用即抛, 不返回空）。
+    """
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            token_data = json.loads(resp.read())
-            if token_data.get("code") != 0:
-                raise RuntimeError(f"获取 tenant_access_token 失败: {token_data}")
-            token = token_data["tenant_access_token"]
-    except Exception as e:
-        raise RuntimeError(f"获取 tenant_access_token 异常: {e}")
-
-    # 读取 Bitable 持仓记录
-    app_token = _local_constants.BITABLE_BASE_TOKEN
-    table_id = _local_constants.BITABLE_TABLE_ID
-    if not app_token or not table_id:
-        raise RuntimeError("Bitable app_token/table_id 为空，请检查 _local_constants")
-
-    codes = []
-    page_token = None
-    while True:
-        params = {"page_size": 100}
-        if page_token:
-            params["page_token"] = page_token
-        url = (
-            f"https://open.feishu.cn/open-apis/bitable/v1/apps/{app_token}"
-            f"/tables/{table_id}/records"
-        )
-        try:
-            req2 = urllib.request.Request(
-                url + "?" + "&".join(f"{k}={v}" for k, v in params.items()),
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            with urllib.request.urlopen(req2, timeout=15) as resp:
-                data = json.loads(resp.read())
-        except Exception as e:
-            raise RuntimeError(f"读取 Bitable 失败: {e}")
-
-        items = data.get("data", {}).get("items", []) or []
-        if not items:
-            break
-        for item in items:
-            fields = item.get("fields", {}) or {}
-            code = str(fields.get("股票ID", "")).strip()
-            if code:
-                codes.append(code)
-        page_token = data.get("data", {}).get("page_token")
-        if not page_token or not data.get("data", {}).get("has_more"):
-            break
-
+        from decision.real_portfolio_truth import get_daily_real_holdings
+        holdings, _meta = get_daily_real_holdings()
+    except Exception as _e:
+        raise RuntimeError(f"unified reader 不可用: {type(_e).__name__}: {_e} — FAIL CLOSED")
+    codes = [str(h.get('symbol') or h.get('code') or '').strip() for h in holdings]
+    codes = [c for c in codes if c]
     if not codes:
-        raise RuntimeError("Bitable 返回空持仓")
+        raise RuntimeError("Bitable 返回空持仓 (unified reader) — FAIL CLOSED")
     return codes
+
 
 def run_westock(cmd, code):
     import time as _t
