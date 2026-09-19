@@ -32,7 +32,9 @@ sync_cron() {
     local tmp_src tmp_dst
     tmp_src=$(mktemp); tmp_dst=$(mktemp)
     find "$CRON_SRC" -maxdepth 1 \( -name '*.py' -o -name '*.sh' \) -printf '%f\n' | sort > "$tmp_src"
-    (cd "$CRON_DST" && ls | sort) > "$tmp_dst" 2>/dev/null
+    # 2026-09-19: 镜像侧清单只列 py/sh（与 src 同口径）——原 ls 全量会把 __pycache__
+    # 等运行时目录算进集合差异造成假 drift（实测 scripts-cron/__pycache__ 88 个 pyc 误报）
+    (cd "$CRON_DST" && ls | grep -E '\.(py|sh)$' | sort) > "$tmp_dst" 2>/dev/null
 
     local diff_files
     diff_files=$(comm -3 "$tmp_src" "$tmp_dst" | tr -d ' ' | sort -u)
