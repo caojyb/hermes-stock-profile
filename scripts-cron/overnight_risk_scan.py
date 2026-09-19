@@ -195,8 +195,15 @@ def main():
         action_lines.append(f"  - {code} {name}: {why}")
 
     if not action_lines and not watch_lines:
-        print(f"✅ 隔夜无命中（业绩预告 0 / 利空 0 / 停牌 0）— 静默，不推送")
+        # 2026-09-19: 无命中时 stdout 必须为空（框架: empty stdout=SILENT_MARKER 不投递;
+        # wakeAgent=false gate 同样静默）。原实现 print 摘要 → no_agent stdout 原样投递 →
+        # "静默不推送"只静默了自己的 webhook, 摘要照样进群（每天一条噪音）。
+        # 无命中属于"无新事可报"的 [SILENT] 语义, 明细写日志留痕。
+        import sys as _sys
+        print(f"[隔夜扫描 {date.today()} 无命中: 业绩预告0/利空0/停牌0, 覆盖{len(stocks)}只, "
+              f"耗时{(datetime.now()-t0).total_seconds():.1f}s]", file=_sys.stderr)
         write_heartbeat()
+        print(json.dumps({"wakeAgent": False}))
         return
 
     lines = [f"🌅 [关注] 隔夜风险扫描 | {date.today()} | 覆盖 {len(stocks)} 只", "=" * 50]
