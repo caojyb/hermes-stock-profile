@@ -79,50 +79,56 @@ def check_klines_count() -> tuple[bool, str]:
         return False, f"❌ K线数量检查失败: {e}"
 
 
-def _latest_stocks_count() -> tuple:
-    """从最近一次 market_cache 刷新记录里取 stocks 列表长度。
+def check_market_cache_log() -> tuple[bool, str]:
+    """检查市场股票基数是否正常（不限定今天）
 
-    双源（按优先级）：
-    1. cron/output/a6a60497fbb6/*.md 存档——wrapper 用 MARKET_CACHE_QUIET=1 后
-       `待更新 stocks=` 行走 _qprint 被静默，只进 cron 投递存档，不落 ~/.hermes/logs
-    2. ~/.hermes/logs/market_cache_refresh.log——非 quiet 路径的兜底
-    返回 (stocks数 或 None, 来源文件路径 或 None)
+    2026-09-19 语义再修正（模拟周一验收时实测抓到这个 bug）：
+    原实现取最近一次刷新的 `待更新 stocks=N`——但 N 是**增量待更新数**不是市场总数！
+    周末/数据最新时 monotonic 层拦截大部分股票，N 只有几百（实测 795），
+    会误报"stocks 列表仅 795（预期 >5000）"。
+    正确基准：输出文件里的 `从 akshare 获取 N 只股票`（全量初始化时的市场总数，
+    实测 5564）或 stocks 表现有行数（5199）——两者都是市场基数，与增量数无关。
     """
     import glob
     output_dir = BASE_DIR / 'cron' / 'output' / 'a6a60497fbb6'
-    # 源1: 投递存档（排除 latest.md 累积文件，按时间戳文件名取最新）
+    market_total = None
+    src = None
+    # 源1: 投递存档里的全量初始化行（"从 akshare 获取 N 只股票"）
     try:
         files = sorted(glob.glob(str(output_dir / '2026-*.md')), reverse=True)
-        for f in files[:5]:
+        for f in files[:8]:
             content = Path(f).read_text(errors='replace')
-            m = re.findall(r'待更新 stocks=(\d+)', content)
+            m = re.findall(r'从 akshare 获取 (\d+) 只股票', content)
             if m:
-                return int(m[-1]), f
+                market_total = int(m[-1])
+                src = f
+                break
     except Exception:
         pass
-    # 源2: 日志文件
-    try:
-        if LOG_FILE.exists():
-            content = LOG_FILE.read_text(errors='replace')
-            m = re.findall(r'待更新 stocks=(\d+)', content)
+    # 源2: stocks 表现有行数（市场基数，任何刷新路径都会维护）
+    if market_total is None:
+        try:
+            conn = sqlite3.connect(MARKET_DB, timeout=60)
+            market_total = conn.execute("SELECT COUNT(*) FROM stocks").fetchone()[0]
+            conn.close()
+            src = 'stocks 表'
+        except Exception:
+            pass
+    # 源3: log 文件兜底
+    if market_total is None and LOG_FILE.exists():
+        try:
+            m = re.findall(r'从 akshare 获取 (\d+) 只股票', LOG_FILE.read_text(errors='replace'))
             if m:
-                return int(m[-1]), str(LOG_FILE)
-    except Exception:
-        pass
-    return None, None
-
-
-def check_market_cache_log() -> tuple[bool, str]:
-    """检查最近一次刷新的 stocks 列表长度是否 > 5000（不限定今天）"""
-    stocks, src = _latest_stocks_count()
-    if stocks is None:
-        return False, "⚠️ 未找到任何 stocks 列表记录（market_cache 可能从未成功刷新）"
-    if stocks > 5000:
-        return True, f"✅ 最近刷新 stocks 列表长度: {stocks}（{Path(src).name}）"
-    elif stocks > 0:
-        return False, f"⚠️ 最近刷新 stocks 列表长度仅 {stocks}（预期 >5000）"
+                market_total = int(m[-1])
+                src = str(LOG_FILE)
+        except Exception:
+            pass
+    if market_total is None:
+        return False, "⚠️ 未找到市场股票基数记录（market_cache 可能从未成功刷新）"
+    if market_total > 5000:
+        return True, f"✅ 市场股票基数: {market_total}（{Path(src).name if '/' in str(src) else src}）"
     else:
-        return False, f"🚨 最近刷新 stocks 列表为空（可能 DB_PATH 切换或数据异常，{src}）"
+        return False, f"⚠️ 市场股票基数仅 {market_total}（预期 >5000，{src}）"
 
 
 def check_duration() -> tuple[bool, str]:
@@ -153,10 +159,16 @@ def check_duration() -> tuple[bool, str]:
         if duration_sec is None:
             return False, "⚠️ market_cache duration 为 NULL"
 
+        # 2026-09-19 语义修正（模拟周一验收实测）: 固定阈值 100s 会误报——
+        # 09-10(70s)/09-09(33s)/09-08(66s) 都是 completed 的增量刷新（monotonic 拦大部分=快是正常），
+        # 而 09-18(62s failed) 才是真信号。判据改为:
+        #   failed + 任意时长 → 必报（失败本身就是信号）
+        #   completed + <100s → 仅当 klines 当日缺口（数量检查已覆盖）才报；否则记参考不报
+        if status == 'failed':
+            return False, f"🚨 最近刷新({run_date})失败, duration {duration_sec}s（假成功/崩溃信号）"
         if duration_sec > 100:
             return True, f"✅ 最近刷新({run_date}, {status}) duration: {duration_sec}s"
-        else:
-            return False, f"⚠️ 最近刷新({run_date}, {status}) duration 仅 {duration_sec}s（预期 >100s，可能假成功）"
+        return True, f"✅ 最近刷新({run_date}, {status}) duration: {duration_sec}s（<100s 但成功=增量少, 正常）"
     except Exception as e:
         return False, f"❌ duration 检查失败: {e}"
 
