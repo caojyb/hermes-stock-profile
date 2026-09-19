@@ -20,6 +20,15 @@ rows=list(c.execute('SELECT scan_date, COUNT(*) FROM double_up_scores GROUP BY s
 if rows: print('  最新一期', rows[0][0], '| 候选', rows[0][1], '只')
 else: print('  无候选(跳过本周)')
 "
+# ── 市场环境分析（2026-09-19 合并：原 market-env-report 周日 17:00 job 并入本周选报，Census 合并工单 #3）──
+# 原 job 已 pause；环境判定是周选策略适配的上下文（震荡/强趋势 → V1/主升浪取舍），与候选池同报一条飞书
+echo ""
+echo "===== 市场环境分析（周度策略参考）====="
+cd /home/caojy/.hermes/profiles/stock/skills/stock/stock-expert/skills/feishu-bitable || exit 2
+out3=$(PYTHONPATH=/home/caojy/.hermes/profiles/stock/stock-work /home/caojy/.hermes/profiles/stock/.venv/bin/python3 market_env_report.py --local 2>&1); c3=$?
+echo "$out3"
+[ $c3 -ne 0 ] && echo "⚠️ [market_env_report exit $c3] 环境分析失败（不影响周选主体，已降级为文字段）"
+
 if [ $c1 -ne 0 ] || [ $c2 -ne 0 ]; then
   echo ""
   echo "⚠️ 周选脚本执行失败:"
