@@ -28,6 +28,8 @@ MARKET_DB = resolver.market_cache_db
 
 SIMULATION_DB = resolver.simulation_db
 
+SIMULATION_TEST_DB = resolver.simulation_test_db
+
 CF_CACHE_DB = resolver.cf_cache_db
 
 WESTOCK_CACHE_DB = resolver.westock_cache_db
@@ -132,6 +134,7 @@ __all__ = [
     "MARKET_CACHE_DB",
     "SIMULATION_DB",
     "SIMULATION_DB_PATH",
+    "SIMULATION_TEST_DB",
     "CF_CACHE_DB",
     "WESTOCK_CACHE_DB",
     "WESTOCK_DB",

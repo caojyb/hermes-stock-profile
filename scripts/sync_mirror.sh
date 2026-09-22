@@ -12,6 +12,12 @@
 
 set -uo pipefail
 
+# 2026-09-22: 统一 LC_ALL=C。两侧 sort 分别走 find -printf | sort 与 ls | sort，
+# 一旦 collating sequence 不一致，comm 会报 "file 1/2 is not in sorted order" 而看不出真实漂移
+# （实测：同一文件集在 zh_CN.UTF-8 与 C 下的 sort 次序不同，_k2_debug_shunt.py 等位置相异）。
+# 统一 C 让 comm 的输入两侧同序，比较结果只反映真实集合差异。
+export LC_ALL=C
+
 STOCK_PROFILE="$HOME/.hermes/profiles/stock"
 REPO="$STOCK_PROFILE/stock-work"
 CRON_SRC="$STOCK_PROFILE/scripts/cron"
@@ -31,7 +37,14 @@ sync_cron() {
     # 用临时清单做精确对齐：镜像侧 = 生产侧顶层 py/sh 的精确集合
     local tmp_src tmp_dst
     tmp_src=$(mktemp); tmp_dst=$(mktemp)
-    find "$CRON_SRC" -maxdepth 1 \( -name '*.py' -o -name '*.sh' \) -printf '%f\n' | sort > "$tmp_src"
+    # 2026-09-22: 排除运行时备份（*_pre_*.py / *.pre_* / *.bak-* / *.before-*）。
+    # 它们由手工修复产生，不是生产代码，进镜像等于把版本历史备份混进 git 追踪
+    # （skill 既有教训：*_pre_v2_*.py 曾造成持续假 drift 与 git 污染）。
+    find "$CRON_SRC" -maxdepth 1 -type f \
+        \( -name '*.py' -o -name '*.sh' \) \
+        ! -name '*_pre_*' ! -name '*.pre_*' \
+        ! -name '*.bak-*' ! -name '*.before-*' \
+        -printf '%f\n' | sort > "$tmp_src"
     # 2026-09-19: 镜像侧清单只列 py/sh（与 src 同口径）——原 ls 全量会把 __pycache__
     # 等运行时目录算进集合差异造成假 drift（实测 scripts-cron/__pycache__ 88 个 pyc 误报）
     (cd "$CRON_DST" && ls | grep -E '\.(py|sh)$' | sort) > "$tmp_dst" 2>/dev/null
@@ -40,7 +53,10 @@ sync_cron() {
     diff_files=$(comm -3 "$tmp_src" "$tmp_dst" | tr -d ' ' | sort -u)
     local content_diff
     content_diff=$(rsync -rcn --out-format='%n' \
-        --include='*.py' --include='*.sh' --exclude='*' \
+        --exclude='*_pre_*' --exclude='*.pre_*' \
+        --exclude='*.bak-*' --exclude='*.before-*' \
+        --include='*.py' --include='*.sh' \
+        --exclude='*' \
         "$CRON_SRC/" "$CRON_DST/" 2>/dev/null | grep -v '/$' || true)
 
     if [ -n "$diff_files" ] || [ -n "$content_diff" ]; then
@@ -49,10 +65,22 @@ sync_cron() {
         [ -n "$diff_files" ] && echo "$diff_files" | sed 's/^/    集合差异: /'
         [ -n "$content_diff" ] && echo "$content_diff" | sed 's/^/    内容差异: /'
         if [ "$CHECK_ONLY" -eq 0 ]; then
-            find "$CRON_SRC" -maxdepth 1 \( -name '*.py' -o -name '*.sh' \) -exec cp {} "$CRON_DST/" \;
-            # 删除生产侧已不存在的镜像文件
+            find "$CRON_SRC" -maxdepth 1 -type f \
+                \( -name '*.py' -o -name '*.sh' \) \
+                ! -name '*_pre_*' ! -name '*.pre_*' \
+                ! -name '*.bak-*' ! -name '*.before-*' \
+                -exec cp {} "$CRON_DST/" \;
+            # 删除镜像侧多余文件：不在本次同步清单里的 .py/.sh 一律清掉。
+            # 清单（tmp_src）已排除运行时备份，所以曾被误收进镜像的 *_pre_* 一并清除。
             (cd "$CRON_DST" && ls) | while read -r f; do
-                [ -f "$CRON_SRC/$f" ] || { case "$f" in *.py|*.sh) rm "$CRON_DST/$f";; esac; }
+                case "$f" in
+                    *.py|*.sh)
+                        if ! grep -qxF "$f" "$tmp_src"; then
+                            echo "  - 移除镜像残留: $f"
+                            rm "$CRON_DST/$f"
+                        fi
+                        ;;
+                esac
             done
             echo "  → 已同步生产 → 镜像"
         fi
