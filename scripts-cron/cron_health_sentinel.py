@@ -47,6 +47,25 @@ def scan_warn_in_output(since: datetime) -> list:
                 text = f.read_text(errors='replace')
                 hits = [ln.strip() for ln in text.splitlines() if WARN_PATTERNS.search(ln)]
                 hits = [h for h in hits if not WARN_WHITELIST.search(h)]
+                # P1-5 修复（2026-09-21）：跳过 prompt/技能提示词中的示例文本
+                # 哨兵的输出文件可能是 agent 的 prompt 拼接，其中包含 markdown 示例
+                # （如「**注意：** market_cache.py 的哨兵在脚本级别上下文...」），
+                # 那不是真 WARN。判据：markdown 示例标记、代码块、或以说明性前缀开头。
+                def _is_example(line: str) -> bool:
+                    if line.startswith(('```', '    ', '\t', '#')):
+                        return True
+                    if line.startswith(('**注意', '**示例', '**说明', '例如', '示例', '注意：', '说明：')):
+                        return True
+                    if line.startswith('**') and line.rstrip().endswith('**'):
+                        return True
+                    if 'prompt' in line.lower() or 'skill' in line.lower():
+                        return True
+                    # 哨兵自身输出的节标题（扫描自己历史输出时会命中）
+                    if line.startswith(('❌ 执行失败', '⚠️ exit 0 但输出含', '❌ 心跳读取失败',
+                                        '❌ 心跳目录检查失败', '⚠️ 心跳过期')):
+                        return True
+                    return False
+                hits = [h for h in hits if not _is_example(h)]
                 if hits:
                     findings.append({
                         'job_id': job_dir.name,
@@ -64,6 +83,10 @@ def scan_failed_executions(since: datetime) -> list:
     findings = []
     if not EXECUTIONS_DB.exists():
         return findings
+    # P1-5 修复（2026-09-21）：排除自身 job_id
+    # 本脚本正在运行的那一行 status 就是 'running'，原逻辑会把自己算成执行失败，
+    # 于是每次推送第一条都是「❌ 执行失败: f80b367d6b79 running」。
+    SELF_JOB_IDS = {'f80b367d6b79', 'cron-health-sentinel', 'cron_health_sentinel'}
     conn = sqlite3.connect(EXECUTIONS_DB, timeout=30)
     rows = conn.execute(
         "SELECT job_id, status, claimed_at, substr(error,1,120) FROM executions "
@@ -71,6 +94,8 @@ def scan_failed_executions(since: datetime) -> list:
         (since.isoformat(),)).fetchall()
     conn.close()
     for job_id, status, claimed_at, error in rows:
+        if job_id in SELF_JOB_IDS:
+            continue
         findings.append({'job_id': job_id, 'status': status,
                          'at': claimed_at[:16] if claimed_at else '?', 'error': error or ''})
     return findings

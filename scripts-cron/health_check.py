@@ -52,6 +52,45 @@ def run_health_check():
     try:
         hb_dir = Path(__file__).resolve().parent.parent.parent / 'stock-work' / 'data' / 'state' / 'heartbeats'
         if hb_dir.exists():
+            # 读 jobs.json 的 cron 表达式，用于判断"下一个计划执行时间是否在未来"
+            cron_exprs = {}
+            try:
+                _jd = json.loads((Path(__file__).resolve().parent.parent.parent / 'cron' / 'jobs.json').read_text())
+                _jobs = _jd if isinstance(_jd, list) else _jd.get('jobs', [])
+                if isinstance(_jobs, dict):
+                    _jobs = list(_jobs.values())
+                for _j in _jobs:
+                    if isinstance(_j, dict) and _j.get('name'):
+                        _sc = _j.get('schedule') or _j.get('cron') or ''
+                        _e = _sc.get('expr') if isinstance(_sc, dict) else _sc
+                        if _e:
+                            cron_exprs[_j['name']] = _e
+            except Exception:
+                pass
+
+            def _window_passed(expr: str, last_run: datetime, now: datetime) -> bool:
+                """若 cron 的分钟/小时位不在当前时刻之前，说明今天还没到执行时间 → 不算过期。
+                简化实现：只解析 'M H * * 1-5' 这类固定日内的表达式，取 (分,时) 组合，
+                若 now 当天的该时刻还没到，则返回 False（未过期）。"""
+                try:
+                    parts = expr.split()
+                    if len(parts) < 2:
+                        return True
+                    minute_s, hour_s = parts[0], parts[1]
+                    if minute_s == '*' or hour_s == '*':
+                        return True
+                    # 只处理单个数字
+                    if not (minute_s.isdigit() and hour_s.isdigit()):
+                        return True
+                    sched_today = now.replace(hour=int(hour_s), minute=int(minute_s),
+                                              second=0, microsecond=0)
+                    if now < sched_today:
+                        return False   # 今天的执行时间还没到
+                    # 已过：若 last_run 就是今天这个时刻附近，则正常
+                    return True
+                except Exception:
+                    return True
+
             for hb_file in hb_dir.glob('*.json'):
                 try:
                     hb = json.loads(hb_file.read_text())
@@ -60,7 +99,14 @@ def run_health_check():
                     now = datetime.now()
                     lag = (now - last_run).total_seconds()
                     if lag > expected * 1.5:
-                        issues.append({"level": levels['heartbeat'], "msg": f"⚠️ 心跳过期: {hb.get('task')} 最后运行 {last_run.isoformat()}，已滞后 {lag/3600:.1f} 小时"})
+                        task = hb.get('task') or hb_file.stem
+                        # P1-4 修复（2026-09-21）：若该任务的今日计划执行时间还没到，跳过
+                        # 典型如 stock-opportunity-push（expected=1800s 但只在 9:30-15:30 跑），
+                        # 15:30 之后 lag 必然超过阈值，属于计划内停机而非故障。
+                        expr = cron_exprs.get(task)
+                        if expr and not _window_passed(expr, last_run, now):
+                            continue
+                        issues.append({"level": levels['heartbeat'], "msg": f"⚠️ 心跳过期: {task} 最后运行 {last_run.isoformat()}，已滞后 {lag/3600:.1f} 小时"})
                 except Exception as e:
                     issues.append({"level": levels['heartbeat'], "msg": f"❌ 心跳读取失败 {hb_file.name}: {e}"})
     except Exception as e:

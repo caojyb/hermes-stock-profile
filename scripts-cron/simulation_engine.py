@@ -409,7 +409,7 @@ def scan_upcoming_ipos():
     """扫描未来7天新股上市日历"""
     ipos = []
     try:
-        url = "http://push2delay.eastmoney.com/api/qt/clist/get"
+        url = "https://push2delay.eastmoney.com/api/qt/clist/get"
         params = {
             'pn': 1, 'pz': 50, 'po': 1, 'np': 1,
             'ut': 'bd1d9ddb04089700cf9c27f6f7426281',
@@ -436,7 +436,7 @@ def scan_upcoming_ipos():
     # 备用：从东方财富API获取新股日历
     if not ipos:
         try:
-            url = "http://push2delay.eastmoney.com/api/qt/stock/get"
+            url = "https://push2delay.eastmoney.com/api/qt/stock/get"
             params = {'secid': '0.000001', 'fields': 'f57,f58,f84,f85', 'invt': 2, 'fltt': 2}
             r = requests.get(url, params=params, timeout=5, headers={'User-Agent': 'Mozilla/5.0'})
         except Exception as e:

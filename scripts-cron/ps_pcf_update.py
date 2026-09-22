@@ -34,7 +34,7 @@ HEADERS = {'User-Agent': 'Mozilla/5.0'}
 
 def get_pcf_batch():
     """批量获取全市场 PCF（市现率）"""
-    url = 'http://push2delay.eastmoney.com/api/qt/clist/get'
+    url = 'https://push2delay.eastmoney.com/api/qt/clist/get'
     pcf_data = {}
     for page in range(1, 60):
         params = {

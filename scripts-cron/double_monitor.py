@@ -726,7 +726,7 @@ sim_conn.commit()
 # 新股虹吸检查
 print("🔍 新股虹吸扫描...")
 try:
-    url = "http://push2delay.eastmoney.com/api/qt/clist/get"
+    url = "https://push2delay.eastmoney.com/api/qt/clist/get"
     params = {'pn': 1, 'pz': 50, 'po': 1, 'np': 1,
         'ut': 'bd1d9ddb04089700cf9c27f6f7426281',
         'fltt': 2, 'invt': 2, 'fid': 'f12',

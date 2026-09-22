@@ -98,7 +98,7 @@ def check_liquidity_accurate(code, min_daily_amt=30000000):
     """从push2delay获取真实成交额"""
     market = '1' if code.startswith(('60', '688', '689')) else '0'
     try:
-        url = 'http://push2delay.eastmoney.com/api/qt/stock/get'
+        url = 'https://push2delay.eastmoney.com/api/qt/stock/get'
         params = {'secid': f'{market}.{code}', 'fields': 'f57,f48', 'invt': 2, 'fltt': 2}
         r = requests.get(url, params=params, timeout=5, headers={'User-Agent': 'Mozilla/5.0'})
         d = r.json().get('data', {})
@@ -119,7 +119,7 @@ def check_market_timing():
     # 沪深300 = 000300.SH / 399300.SZ
     # 用push2delay获取000300指数数据
     try:
-        url = 'http://push2delay.eastmoney.com/api/qt/stock/get'
+        url = 'https://push2delay.eastmoney.com/api/qt/stock/get'
         params = {'secid': '1.000300', 'fields': 'f57,f43,f44,f45,f46,f47,f48,f169,f170', 'invt': 2, 'fltt': 2}
         r = requests.get(url, params=params, timeout=5, headers={'User-Agent': 'Mozilla/5.0'})
         d = r.json().get('data', {})

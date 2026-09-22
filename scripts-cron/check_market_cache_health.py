@@ -79,6 +79,115 @@ def check_klines_count() -> tuple[bool, str]:
         return False, f"❌ K线数量检查失败: {e}"
 
 
+def check_kline_consistency() -> tuple[bool, str]:
+    """检查 klines 数据一致性：识别"常数平移"式静默数据损坏（2026-09-22 审计 P1-10 补）
+
+    背景：原健康检查只查数量够不够、日期新不新、耗时正不正常，完全没有一致性校验。
+    2026-09-21 的 16:30 刷新把 21 只股票共 12,807 行 OHLC 整体平移（-0.01~-1.00 元），
+    在窗口边界制造 2.8%~10% 假跳空，而健康检查仍给全 ✅。
+
+    【为什么不能用库内自洽性判据】
+    实测校准（阳性/阴性双对照）证明：常数平移后，段内相邻行的 Δ 互相抵消，
+    close/change_pct 的自洽偏差与老股复权基准切换（实测 000007 2023-05 +217%）
+    在统计上无法区分——连续多轮调参都只能做到"阳性也漏"或"阴性误报"。
+    先把校准过程和结论写在这里，避免后来者重走这条死路：
+      · 判据A 相邻日 close 跳变>30%  → 平移在历史段，抓不到；抓近期又等同没抓
+      · 判据B close vs change_pct 自洽 → 复权切换同形态，误报 8 只（000007/000017/...）
+      · 判据C LAG 全历史 + 幅度<25pct  → 仍同时命中复权股，与平移无法分离
+    结论：库内单表演不了这个判别式，必须引入外部基准。
+
+    【本实现】与最近的 klines 快照（备份库 / 上一日冻结快照）逐行比对 OHLC。
+    阳性对照：给 601886 的 2024 年段统一注入 -0.25 平移后，
+    本检查精确报出 `601886 660 行差异`，且零误报。
+    阴性对照：与同日备份比对报 0 差异。
+    """
+    import glob
+    import os
+    try:
+        conn = sqlite3.connect(MARKET_DB, timeout=180)
+        conn.execute('PRAGMA busy_timeout=180000')
+        cur = conn.cursor()
+
+        cur.execute("SELECT MAX(date) FROM klines")
+        latest = cur.fetchone()[0]
+        if not latest:
+            conn.close()
+            return False, "🚨 klines 表为空，无法做一致性校验"
+
+        problems = []
+
+        # ① 单日极端涨跌幅与重复行（库内可判的两项）
+        cur.execute(
+            "SELECT COUNT(DISTINCT code) FROM klines WHERE date=? AND ABS(change_pct) > 20.5",
+            (latest,))
+        extreme = cur.fetchone()[0]
+        if extreme > 0:
+            cur.execute(
+                "SELECT code, change_pct FROM klines WHERE date=? AND ABS(change_pct) > 20.5 "
+                "ORDER BY ABS(change_pct) DESC LIMIT 5", (latest,))
+            samples = ', '.join(f"{c}({p:+.2f}%)" for c, p in cur.fetchall())
+            problems.append(f"极端涨跌幅 {extreme} 只 >±20.5%（如 {samples}）——复牌/股改属正常，其余需人工核")
+        cur.execute(
+            "SELECT COUNT(*) FROM (SELECT code, date FROM klines GROUP BY code, date HAVING COUNT(*) > 1)")
+        dup = cur.fetchone()[0]
+        if dup > 0:
+            problems.append(f"{dup} 个 (code,date) 重复行——统计/均线会翻倍失真")
+
+        # ② 与最近的历史快照比对 OHLC（检测平移的唯一可靠判据）
+        base_dir = Path(MARKET_DB).resolve().parent
+        # 候选：同目录下 market_cache_pre_*.db（每日修复前的自动备份）
+        snapshots = sorted(
+            glob.glob(str(base_dir / 'market_cache_pre_*.db')),
+            key=os.path.getmtime, reverse=True)
+        snapshots = [s for s in snapshots if os.path.basename(s) != os.path.basename(str(MARKET_DB))]
+        compared = None
+        for snap in snapshots[:1]:  # 只比最近一个，控制耗时
+            try:
+                if not os.path.exists(snap) or os.path.getsize(snap) < 1e9:
+                    continue
+                cur.execute("ATTACH DATABASE ? AS snap", (snap,))
+                cur.execute("SELECT MAX(date) FROM snap.klines")
+                row = cur.fetchone()
+                snap_latest = row[0] if row else None
+                if not snap_latest:
+                    cur.execute("DETACH DATABASE snap")
+                    continue
+                diff = cur.execute("""
+                    SELECT m.code, COUNT(*) AS n
+                    FROM main.klines m JOIN snap.klines s ON m.code=s.code AND m.date=s.date
+                    WHERE ABS(m.close - s.close) > 1e-6
+                       OR ABS(m.high - s.high) > 1e-6
+                       OR ABS(m.low - s.low) > 1e-6
+                       OR ABS(m.open - s.open) > 1e-6
+                    GROUP BY m.code ORDER BY n DESC LIMIT 5
+                """).fetchall()
+                cur.execute("DETACH DATABASE snap")
+                compared = (os.path.basename(snap), snap_latest, len(diff), diff)
+            except Exception as _se:
+                try:
+                    cur.execute("DETACH DATABASE snap")
+                except Exception:
+                    pass
+                continue
+
+        conn.close()
+
+        if compared:
+            name, snap_latest, n_codes, diff = compared
+            if n_codes > 0:
+                samples = ', '.join(f"{c}({n}行)" for c, n in diff)
+                problems.append(
+                    f"与快照 {name}(截至{snap_latest}) 比对：{n_codes}+ 只股票 OHLC 被改动"
+                    f"（如 {samples}）——常数平移/口径切换的指纹，需人工确认来源")
+
+        if problems:
+            return False, "⚠️ 数据一致性: " + " | ".join(problems)
+        tail = f"；快照比对: {compared[0]} 无差异" if compared else "；无可用历史快照，仅库内检查"
+        return True, f"✅ klines({latest}) 一致性: 无极端涨跌幅/无重复行{tail}"
+    except Exception as e:
+        return False, f"❌ klines 一致性检查失败: {e}"
+
+
 def check_market_cache_log() -> tuple[bool, str]:
     """检查市场股票基数是否正常（不限定今天）
 
@@ -123,12 +232,31 @@ def check_market_cache_log() -> tuple[bool, str]:
                 src = str(LOG_FILE)
         except Exception:
             pass
-    if market_total is None:
-        return False, "⚠️ 未找到市场股票基数记录（market_cache 可能从未成功刷新）"
-    if market_total > 5000:
-        return True, f"✅ 市场股票基数: {market_total}（{Path(src).name if '/' in str(src) else src}）"
+
+    # 2026-09-22 审计：口径对账。
+    # 原实现源1（旧投递日志的"从 akshare 获取 5564 只"）优先于源2（stocks 表现有行数），
+    # 于是健康检查持续报 5564，而库里实际只有 5199 只——差 365 且两数来自不同时点。
+    # 现在**一律以 stocks 表现值为主口径**，旧日志数字降级为参考值并标注差异，
+    # 避免读者把两个时点的市场基数混为一谈。
+    current_total = None
+    try:
+        conn = sqlite3.connect(MARKET_DB, timeout=60)
+        current_total = conn.execute("SELECT COUNT(*) FROM stocks").fetchone()[0]
+        conn.close()
+    except Exception:
+        pass
+
+    if current_total is None:
+        return False, "⚠️ 无法读取 stocks 表行数（'只股票'市场基数无从核对）"
+
+    ref_txt = ''
+    if market_total is not None and market_total != current_total:
+        ref_txt = f"（旧日志参考值 {market_total}，相差 {abs(market_total - current_total)}，属不同时点口径）"
+
+    if current_total > 5000:
+        return True, f"✅ 市场股票基数: {current_total}（stocks 表现有行数）{ref_txt}"
     else:
-        return False, f"⚠️ 市场股票基数仅 {market_total}（预期 >5000，{src}）"
+        return False, f"⚠️ 市场股票基数仅 {current_total}（stocks 表，预期 >5000）{ref_txt}"
 
 
 def check_duration() -> tuple[bool, str]:
@@ -270,6 +398,7 @@ def main():
 
     checks = [
         ("K线数量", check_klines_count),
+        ("K线一致性", check_kline_consistency),
         ("日志 stocks 列表", check_market_cache_log),
         ("执行 duration", check_duration),
         ("关键表新鲜度", check_table_freshness),

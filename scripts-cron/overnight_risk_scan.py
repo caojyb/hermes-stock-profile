@@ -145,7 +145,7 @@ def check_suspension(stocks):
     for attempt in range(2):
         try:
             secids = ','.join(f"{'1.' if c.startswith('6') else '0.'}{c}" for c in stocks)
-            r = requests.get("http://push2delay.eastmoney.com/api/qt/ulist.np/get",
+            r = requests.get("https://push2delay.eastmoney.com/api/qt/ulist.np/get",
                              params={'secids': secids, 'fields': 'f12,f14,f_restDay',
                                      'ut': 'bd1d9ddb04089700cf9c27f6f7426281', 'fltt': 2, 'invt': 2},
                              timeout=10, headers={'User-Agent': 'Mozilla/5.0'})

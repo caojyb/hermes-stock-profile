@@ -46,19 +46,32 @@ def _client():
 def fetch_market_overview():
     """
     获取全市场概览：
-    - 涨跌比（push2delay，并行5页样本约500只）
-    - 领涨/领跌（push2delay，Top100的涨跌幅排行）
+    - 涨跌统计：优先本地 DB klines 全市场口径（2026-09-22 P0-1），
+      仅在 DB 不可用时回落 push2delay 500 只样本并标注口径
+    - 领涨/领跌：push2delay 涨跌幅排行；数据源失败时整段不输出（P0-2）
     """
-    # Part A: 涨跌统计（push2delay 样本估算）
-    ad = fetch_adv_decline()
-    if ad and not ad.get("error"):
-        result = ad
+    # Part A: 涨跌统计
+    # 2026-09-22 审计 P0-1：原实现用 500 只样本冒充全市场，涨停少报 11 倍。
+    # 现在优先 DB 全市场；DB 拿不到才用在线样本且明确标注。
+    result = fetch_adv_decline_full_from_db()
+    if result is None:
+        ad = fetch_adv_decline()
+        if ad and not ad.get("error"):
+            result = ad
+            result["_scope"] = "样本500只"
+        else:
+            result = {"total": 0, "up": 0, "down": 0, "flat": 0,
+                      "limit_up": 0, "limit_down": 0, "up_ratio": 0,
+                      "top5": [], "bot5": [], "_scope": "样本500只"}
     else:
-        result = {"total": 0, "up": 0, "down": 0, "flat": 0,
-                  "limit_up": 0, "limit_down": 0, "up_ratio": 0,
-                  "top5": [], "bot5": []}
+        result.setdefault("top5", [])
+        result.setdefault("bot5", [])
 
     # Part B: 领涨/领跌（push2delay，Top100排行）
+    # 2026-09-22 审计 P0-2：原实现 `except Exception: pass` 静默吞掉数据源失败，
+    # 导致 push2delay 整域不可达时 bot5/top5 保留陈旧值甚至空表兜底值，
+    # 实测 2026-09-21 把三只涨停股（000504 +9.99%/600301 +9.99%/603580 +10.00%）
+    # 当"领跌"推送。现在：失败时 top5/bot5 一律留空，展示层整段不输出。
     try:
         fs = "m:0+t:6,m:0+t:13,m:0+t:80,m:1+t:2,m:1+t:23,m:1+t:8"
         url = (
@@ -75,21 +88,91 @@ def fetch_market_overview():
                 {"name": d.get("f14",""), "code": d.get("f12",""), "pct": d.get("f3",0)}
                 for d in diff[:5]
             ]
-            # Bottom 5 = worst performers (last 5 of the sorted list)
+            # Bottom 5 = worst performers (last 5 of the descending list)
             result["bot5"] = [
                 {"name": d.get("f14",""), "code": d.get("f12",""), "pct": d.get("f3",0)}
                 for d in diff[-5:]
             ][::-1]
-    except Exception:
-        pass
+        else:
+            print(f"[WARN] sentiment_thermo: 排行数据不足({len(diff)}条)，领涨/领跌不输出",
+                  file=sys.stderr)
+            result["top5"] = []
+            result["bot5"] = []
+    except Exception as e:
+        # 数据源失败：清空排行，禁止输出陈旧/兜底值
+        print(f"[WARN] sentiment_thermo: 排行数据源失败({type(e).__name__})，领涨/领跌不输出",
+              file=sys.stderr)
+        result["top5"] = []
+        result["bot5"] = []
 
     return result
 
 
+def fetch_adv_decline_full_from_db():
+    """
+    【2026-09-22 审计 P0-1】全市场涨跌统计——直接查本地 DB klines，零网络依赖。
+
+    原实现用 push2delay 前 5 页（500 只）样本估算全市场，且推送不标注样本口径：
+    实测 2026-09-21 样本报 涨停12/跌停0/涨跌比65.6%，全市场真实为
+    涨停136/跌停3/涨跌比81.4%——样本只有 500 只，涨停数少报 11 倍，
+    并直接污染情绪温度计的「涨跌比」(权重30%)与「涨停热度」(权重15%)两个维度。
+
+    本地 klines 表当日 5005 只全量覆盖，一次 SQL 即得真实统计，比抽样更快更准。
+    返回 dict 或 None（无当日数据时回落在线样本）。
+    """
+    import sqlite3
+    try:
+        # skills/stock/stock-expert/skills/feishu-bitable/sentiment_thermo.py
+        # → parents[5] = <profile>/stock
+        sys.path.insert(0, str(Path(__file__).resolve().parents[5] / 'stock-work'))
+        from core.compat_paths import MARKET_DB
+    except Exception:
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{MARKET_DB}?mode=ro", uri=True, timeout=30)
+        cur = conn.cursor()
+        cur.execute("SELECT MAX(date) FROM klines")
+        row = cur.fetchone()
+        if not row or not row[0]:
+            conn.close()
+            return None
+        latest = row[0]
+        cur.execute("""
+            SELECT COUNT(*),
+                   SUM(CASE WHEN change_pct > 0 THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN change_pct < 0 THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN change_pct = 0 THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN change_pct >= 9.8 THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN change_pct <= -9.8 THEN 1 ELSE 0 END)
+            FROM klines WHERE date = ?
+        """, (latest,))
+        total, up, down, flat, limit_up, limit_down = cur.fetchone()
+        conn.close()
+        total = total or 0
+        if total == 0:
+            return None
+        return {
+            "total": total,
+            "up": up or 0,
+            "down": down or 0,
+            "flat": flat or 0,
+            "limit_up": limit_up or 0,
+            "limit_down": limit_down or 0,
+            "up_ratio": round((up or 0) / total * 100, 1),
+            "_date": latest,
+            "_scope": "全市场",
+        }
+    except Exception as _e:
+        print(f"[WARN] sentiment_thermo DB 全市场统计失败({type(_e).__name__}: {_e})，回落在线样本", file=sys.stderr)
+        return None
+
+
 def fetch_adv_decline():
     """
-    全市场涨跌统计（push2delay，并行取5页样本约500只）
-    弃用 akshare（慢，25s），改用直连 push2delay 并行样本
+    全市场涨跌统计（在线抽样口径，仅作 DB 不可用时的降级）
+
+    ⚠️ 口径警告：push2delay 前 5 页仅约 500 只样本（且按涨幅降序，系统性偏强），
+    只能表征样本分布，不等于全市场。调用方必须标注「样本500只」。
     """
     import concurrent.futures
 
@@ -391,7 +474,11 @@ def run(json_output=False):
 
     # 涨跌
     if overview and not overview.get("error"):
-        lines.append(f"\n📊 涨跌统计")
+        # 2026-09-22 审计 P0-1：必须显式标注统计口径，读者不能再把样本当全市场
+        _scope = overview.get("_scope", "全市场")
+        _dt = overview.get("_date")
+        _scope_txt = f"（{_scope}" + (f", {_dt}" if _dt else "") + "）"
+        lines.append(f"\n📊 涨跌统计{_scope_txt}")
         lines.append(f"  上涨: {overview['up']} | 下跌: {overview['down']} | 平盘: {overview['flat']}")
         lines.append(f"  涨停: {overview['limit_up']} | 跌停: {overview['limit_down']}")
         lines.append(f"  涨跌比: {overview['up_ratio']}%")

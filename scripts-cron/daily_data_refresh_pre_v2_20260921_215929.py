@@ -39,11 +39,6 @@ WESTOCK_DB = str(get_db_path('westock_cache'))
 LHB_DB = str(get_db_path('lhb_cache'))
 HEADERS = {'User-Agent': 'Mozilla/5.0'}
 
-# 主力资金当日覆盖量下限（2026-09-22 审计 P1-5）
-# 依据 main_fund_flow 近 5 个交易日实测：173 / 77 / 176 / 162 / 136，
-# 崩塌日 09-21 仅 36 只。取 40% 历史水平作阈值，低于即告警。
-MAIN_FUND_MIN_COVERAGE = 50
-
 # westock batch script path
 WESTOCK_BATCH = '/home/caojy/.hermes/profiles/stock/skills/stock/stock-data-sources/scripts/westock_batch.py'
 
@@ -155,76 +150,60 @@ def fetch_main_fund_rank(date_str):
 
 
 def fetch_lhb(date_str):
-    """获取龙虎榜数据（带重试，最多3次）
-
-    2026-09-21 v2：主备双域降级
-      主: datacenter.eastmoney.com/securities/api/data/v1/get
-      备: datacenter-web.eastmoney.com/securities/api/data/v1/get
-      两个域名的该 reportName 已实测返回完全一致的数据（逐字段比对 True），
-      但属不同基础设施，单域故障时可切换，避免龙虎榜链路整体停更。
-    """
+    """获取龙虎榜数据（带重试，最多3次）"""
     import requests
-    COLS = ('SECURITY_CODE,SECUCODE,SECURITY_NAME_ABBR,TRADE_DATE,EXPLAIN,'
-            'CLOSE_PRICE,CHANGE_RATE,BILLBOARD_NET_AMT,BILLBOARD_BUY_AMT,'
-            'BILLBOARD_SELL_AMT,BILLBOARD_DEAL_AMT,ACCUM_AMOUNT,TURNOVERRATE,FREE_MARKET_CAP')
-    SOURCES = [
-        ('datacenter', 'https://datacenter.eastmoney.com/securities/api/data/v1/get'),
-        ('datacenter-web', 'https://datacenter-web.eastmoney.com/securities/api/data/v1/get'),
-    ]
+    url = 'https://datacenter.eastmoney.com/securities/api/data/v1/get'
+    params = {
+        'reportName': 'RPT_DAILYBILLBOARD_DETAILSNEW',
+        'columns': 'SECURITY_CODE,SECUCODE,SECURITY_NAME_ABBR,TRADE_DATE,EXPLAIN,CLOSE_PRICE,CHANGE_RATE,BILLBOARD_NET_AMT,BILLBOARD_BUY_AMT,BILLBOARD_SELL_AMT,BILLBOARD_DEAL_AMT,ACCUM_AMOUNT,TURNOVERRATE,FREE_MARKET_CAP',
+        'filter': f"(TRADE_DATE='{date_str}')",
+        'pageNumber': 1,
+        'pageSize': 200,
+        'sortTypes': -1,
+        'sortColumns': 'BILLBOARD_NET_AMT',
+    }
     max_retries = 3
-    for src_name, url in SOURCES:
-        for attempt in range(1, max_retries + 1):
-            params = {
-                'reportName': 'RPT_DAILYBILLBOARD_DETAILSNEW',
-                'columns': COLS,
-                'filter': f"(TRADE_DATE='{date_str}')",
-                'pageNumber': 1,
-                'pageSize': 200,
-                'sortTypes': -1,
-                'sortColumns': 'BILLBOARD_NET_AMT',
-            }
-            try:
-                r = requests.get(url, params=params, timeout=20, headers=HEADERS)
-                d = r.json()
-                if not d.get('success') or not d.get('result'):
-                    if attempt < max_retries:
-                        wait = attempt * 5
-                        print(f'  龙虎榜[{src_name}] API 返回空 (第{attempt}次), {wait}s 后重试...')
-                        time.sleep(wait)
-                        continue
-                    break   # 本源重试耗尽 → 换下一个源
-                rows = d['result']['data']
-                results = []
-                for row in rows:
-                    secucode = row.get('SECUCODE', '')
-                    code = row.get('SECURITY_CODE', '') or secucode.split('.')[0] if '.' in secucode else secucode
-                    results.append({
-                        'code': code,
-                        'name': row.get('SECURITY_NAME_ABBR', ''),
-                        'trade_date': date_str,
-                        'close_price': row.get('CLOSE_PRICE', 0) or 0,
-                        'change_rate': row.get('CHANGE_RATE', 0) or 0,
-                        'net_amt': row.get('BILLBOARD_NET_AMT', 0) or 0,
-                        'buy_amt': row.get('BILLBOARD_BUY_AMT', 0) or 0,
-                        'sell_amt': row.get('BILLBOARD_SELL_AMT', 0) or 0,
-                        'deal_amt': row.get('BILLBOARD_DEAL_AMT', 0) or 0,
-                        'accum_amt': row.get('ACCUM_AMOUNT', 0) or 0,
-                        'turnover_rate': row.get('TURNOVERRATE', 0) or 0,
-                        'free_mcap': row.get('FREE_MARKET_CAP', 0) or 0,
-                        'explain': row.get('EXPLAIN', '') or '',
-                        'fetched_at': datetime.now().isoformat(),
-                    })
-                if results:
-                    print(f'  龙虎榜[{src_name}]: {len(results)} 条')
-                return results
-            except Exception as e:
+    for attempt in range(1, max_retries + 1):
+        try:
+            r = requests.get(url, params=params, timeout=20, headers=HEADERS)
+            d = r.json()
+            if not d.get('success') or not d.get('result'):
                 if attempt < max_retries:
                     wait = attempt * 5
-                    print(f'  龙虎榜[{src_name}]获取失败: {e} (第{attempt}次), {wait}s 后重试...')
+                    print(f'  龙虎榜 API 返回空 (第{attempt}次), {wait}s 后重试...')
                     time.sleep(wait)
-                else:
-                    print(f'  龙虎榜[{src_name}]获取失败(已重试{max_retries}次): {e} — 换备用源')
-    print(f'  龙虎榜获取失败(两个源均不可用)')
+                    continue
+                return []
+            rows = d['result']['data']
+            results = []
+            for row in rows:
+                secucode = row.get('SECUCODE', '')
+                code = row.get('SECURITY_CODE', '') or secucode.split('.')[0] if '.' in secucode else secucode
+                results.append({
+                    'code': code,
+                    'name': row.get('SECURITY_NAME_ABBR', ''),
+                    'trade_date': date_str,
+                    'close_price': row.get('CLOSE_PRICE', 0) or 0,
+                    'change_rate': row.get('CHANGE_RATE', 0) or 0,
+                    'net_amt': row.get('BILLBOARD_NET_AMT', 0) or 0,
+                    'buy_amt': row.get('BILLBOARD_BUY_AMT', 0) or 0,
+                    'sell_amt': row.get('BILLBOARD_SELL_AMT', 0) or 0,
+                    'deal_amt': row.get('BILLBOARD_DEAL_AMT', 0) or 0,
+                    'accum_amt': row.get('ACCUM_AMOUNT', 0) or 0,
+                    'turnover_rate': row.get('TURNOVERRATE', 0) or 0,
+                    'free_mcap': row.get('FREE_MARKET_CAP', 0) or 0,
+                    'explain': row.get('EXPLAIN', '') or '',
+                    'fetched_at': datetime.now().isoformat(),
+                })
+            return results
+        except Exception as e:
+            if attempt < max_retries:
+                wait = attempt * 5
+                print(f'  龙虎榜获取失败: {e} (第{attempt}次), {wait}s 后重试...')
+                time.sleep(wait)
+            else:
+                print(f'  龙虎榜获取失败(已重试{max_retries}次): {e}')
+                return []
     return []
 
 
@@ -477,28 +456,10 @@ def refresh_main_fund_flow(date_str):
 
     con = connect_db(MARKET_DB, writer=True)
     cur = con.cursor()
-    # 2026-09-22 审计 P1-5：覆盖量告警。
-    # 实测 2026-09-21 主力资金仅 36 条（09-17/18 为 176/162），
-    # 刷新"成功"但覆盖崩塌，收盘快照仍用这 36 只深市股算全市场净流入。
-    # 阈值取该表历史中位数的保守下限（近 5 个交易日均值 125 → 取 40% 即 50）。
     cur.execute('SELECT COUNT(*) FROM main_fund_flow WHERE date=?', (date_str,))
     count = cur.fetchone()[0]
-    cur.execute('SELECT COUNT(DISTINCT code) FROM main_fund_flow WHERE date=?', (date_str,))
-    distinct_codes = cur.fetchone()[0]
-    # 带交易所后缀/前缀的非法主键（应为 0）
-    cur.execute(
-        "SELECT COUNT(*) FROM main_fund_flow WHERE date=? AND "
-        "(code LIKE '%.%' OR code LIKE 'sz%' OR code LIKE 'sh%' OR code LIKE 'bj%')", (date_str,))
-    malformed = cur.fetchone()[0]
     con.close()
-
-    print(f'主力资金合计 {count} 条（去重股票 {distinct_codes} 只）')
-    if malformed:
-        print(f'  ⚠️ {malformed} 条 code 带交易所前缀/后缀（应为 0）——下游按裸代码 join 会漏掉它们')
-    if distinct_codes < MAIN_FUND_MIN_COVERAGE:
-        print(f'  🚨 主力资金覆盖量异常：当日仅 {distinct_codes} 只'
-              f'（阈值 {MAIN_FUND_MIN_COVERAGE}）——接口可能失败或源不可用，'
-              f'任何基于该表的"全市场资金"结论均不可信')
+    print(f'主力资金合计 {count} 条')
     return count
 
 
@@ -567,21 +528,18 @@ def _refresh_westock_main_fund_flow(date_str: str, batch_size: int = 10) -> int:
         cur = con.cursor()
         for row in r['parsed']:
             code = row.get('SecuCode') or row.get('code') or ''
-            # 2026-09-22 审计 P1-5：westock 返回的 SecuCode 形如 '000002.SZ'（带交易所后缀），
-            # 而 main_fund_flow.code 全库统一为裸 6 位代码（klines/indicators/stocks 均如此）。
-            # 原实现原样入库 → 与 eastmoney 路径写的裸代码成为两套主键，
-            # PRIMARY KEY(code,date) 撞不上 → 同一股票两条记录，
-            # 下游按裸代码 join 时把带后缀的那批全部漏掉。
-            # 实测 2026-09-21：36 条里 35 条带 'sz' 前缀、沪市 0 条，覆盖量崩塌。
             if not code:
                 continue
-            code_bare = code.split('.')[0][-6:] if '.' in code else code[-6:]
             try:
                 main_net = float(row.get('MainNetFlow') or 0)
             except (TypeError, ValueError):
                 main_net = 0.0
+            try:
+                main_pct = float(row.get('MainInflowCircRate') or 0)
+            except (TypeError, ValueError):
+                main_pct = 0.0
             cur.execute('INSERT OR REPLACE INTO main_fund_flow (code, date, net_amt) VALUES (?, ?, ?)',
-                        (code_bare, date_str, main_net))
+                        (code, date_str, main_net))
             inserted += 1
         con.commit()
         con.close()
@@ -612,17 +570,8 @@ def refresh_lhb(date_str):
     cur = con.cursor()
     cur.execute('SELECT COUNT(*) FROM lhb_data WHERE trade_date=?', (date_str,))
     count = cur.fetchone()[0]
-    cur.execute('SELECT COUNT(DISTINCT code) FROM lhb_data WHERE trade_date=?', (date_str,))
-    distinct_codes = cur.fetchone()[0]
     con.close()
-    # 2026-09-22 审计 P1-6：原实现把三个不同口径的数字并列打印——
-    # "eastmoney 写入 42" + "westock 补写 104" + "合计 47"，看起来像算错了。
-    # 真相：两个源都按 (code, trade_date) UNIQUE upsert，eastmoney 已写的条目被
-    # westock 同 code 覆盖而非追加；且历史上有带前缀脏行（已清理）。
-    # 现在显式拆分口径，读者能看出"写入动作数 ≠ 落库行数"是覆盖导致的。
-    print(f'龙虎榜落库 {count} 条（去重股票 {distinct_codes} 只）')
-    print(f'  （写入动作: eastmoney {eastmoney_count} + westock {westock_count} = '
-          f'{eastmoney_count + westock_count} 次；同 (code,trade_date) upsert 覆盖不累加）')
+    print(f'龙虎榜合计 {count} 条')
     return count
 
 
@@ -724,12 +673,6 @@ def _refresh_westock_lhb(date_str: str, batch_size: int = 10) -> int:
             r = client.westock_lhb(code, date=date_str)
             if not r.get('success') or not isinstance(r.get('parsed'), list):
                 continue
-            # 2026-09-22 审计 P0-3：westock 需要带市场前缀的参数（sz/sh），
-            # 但 lhb_data.code 是全库统一使用的裸 6 位代码（UNIQUE(code, trade_date)）。
-            # 原实现把 'sz000002' 原样写入，与东财路径写入的 '000002' 成为两行，
-            # 同一个 (code, trade_date) 主题上出现两份数据——下游统计翻倍、
-            # 机构 Top5 出现"重复凑数"假象。入库前必须剥掉前缀。
-            code_bare = code[-6:] if code[:2] in ('sz', 'sh', 'bj') else code
             for row in r['parsed']:
                 name = row.get('Name', '') or row.get('name', '')
                 try:
@@ -739,7 +682,7 @@ def _refresh_westock_lhb(date_str: str, batch_size: int = 10) -> int:
                          buy_amt, sell_amt, deal_amt, accum_amt, turnover_rate, free_mcap, explain, fetched_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
-                        code_bare, name, date_str,
+                        code, name, date_str,
                         float(row.get('ClosePrice', 0) or 0),
                         float(row.get('ChangeRate', 0) or 0),
                         float(row.get('NetAmt', 0) or 0),

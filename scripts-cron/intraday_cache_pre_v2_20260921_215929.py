@@ -24,13 +24,6 @@ import pool_loader
 
 CACHE_DB = _STOCK_INTRADAY_CACHE_DB
 
-# ---- 信号 A 判据参数（2026-09-22 审计 P1-7 收紧）----
-# 原 consecutive>=3 使开盘 3 根 5 分钟 K 线即可触发，实测触发率 86%~95%，零筛选力。
-SIGNAL_A_MIN_CONSECUTIVE = 20   # 至少 20 根 = 100 分钟，覆盖开盘+早盘
-SIGNAL_A_MAX_DEV_PCT     = 10.0 # 现价距 MA20 偏离上限，避免追已远离均线的票
-# 与 data_filters.check_gap_up 的"高开 >3% 触发暂缓"保持同一阈值（同源不同副本会再次分叉）
-SIGNAL_A_MAX_GAP_PCT     = 3.0
-
 TRENDS2_URL = 'https://push2delay.eastmoney.com/api/qt/stock/trends2/get'
 HEADERS = {'User-Agent': 'Mozilla/5.0'}
 
@@ -94,34 +87,6 @@ def get_secid(code):
     else:
         return f'0.{code}'
 
-def _fetch_minute_sina(code, no_proxy):
-    """新浪 getKLineData scale=5 降级路径（2026-09-21 v2 增加）
-
-    TRENDS2_URL(push2delay) 今天整体 RemoteDisconnected，分钟级链路单吊一个域名。
-    新浪 quotes.sina.cn 是独立基础设施，实测 scale=5/15/30/60/240 全部 200。
-    注意：新浪必须带 Referer: https://finance.sina.com.cn，否则 403。
-    """
-    url = 'https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData'
-    mkt = 'sh' if code.startswith('6') else 'sz'
-    r = requests.get(url, params={'symbol': f'{mkt}{code}', 'scale': '5',
-                                  'ma': 'no', 'datalen': '48'},
-                     timeout=12, headers={'User-Agent': 'Mozilla/5.0',
-                                          'Referer': 'https://finance.sina.com.cn'},
-                     proxies=no_proxy)
-    rows = r.json()
-    if not rows:
-        return []
-    out = []
-    for row in rows:
-        # {"day":"2026-09-18 14:55:00","open":"..","high":"..","low":"..",
-        #  "close":"..","volume":"..","amount":".."}
-        out.append((row['day'].replace(' ', 'T'),
-                    float(row['open']), float(row['close']),
-                    float(row['high']), float(row['low']),
-                    float(row['volume']), float(row.get('amount') or 0)))
-    return out
-
-
 def fetch_minute_data(stocks):
     """
     批量获取分钟级数据
@@ -129,14 +94,14 @@ def fetch_minute_data(stocks):
     """
     results = {}
     errors = []
-
+    
     # push2delay 不走代理，代理会拦截返回空
     no_proxy = {'http': '', 'https': ''}
-
+    
     for s in stocks:
         code = s['code'] if isinstance(s, dict) else s
         secid = get_secid(code)
-
+        
         try:
             r = requests.get(TRENDS2_URL, params={
                 'secid': secid,
@@ -145,22 +110,12 @@ def fetch_minute_data(stocks):
                 'ndays': '1',
                 'lmt': '500'
             }, timeout=10, headers=HEADERS, proxies=no_proxy)
-
+            
             trends = r.json().get('data', {}).get('trends', [])
-
-            # ---- v2 降级：push2delay 不可达或无数据 → 新浪 scale=5 ----
             if not trends:
-                try:
-                    sina_rows = _fetch_minute_sina(code, no_proxy)
-                    if sina_rows:
-                        results[code] = sina_rows
-                        continue
-                except Exception as _se:
-                    errors.append(f'{code}: sina fallback {type(_se).__name__}')
-                    continue
                 errors.append(f'{code}: 无数据')
                 continue
-
+            
             parsed = []
             for t in trends:
                 parts = t.split(',')
@@ -251,54 +206,6 @@ def save_5min_kline(conn, data):
     conn.commit()
     return saved
 
-def get_gap_pct(code):
-    """最近一个交易日相对前一日的高开幅度（%，复用 data_filters 同一定义）
-
-    2026-09-22 审计 P1-7：用于与 double_monitor 的跳空过滤器对齐结论。
-    """
-    try:
-        con = sqlite3.connect(MARKET_DB, timeout=60)
-        cur = con.cursor()
-        cur.execute("SELECT close, open FROM klines WHERE code=? ORDER BY date DESC LIMIT 2", (code,))
-        ks = cur.fetchall()
-        con.close()
-        if len(ks) < 2 or not ks[1][0] or ks[1][0] <= 0:
-            return None
-        prev_close = float(ks[1][0])
-        today_open = float(ks[0][1] or 0)
-        if today_open <= 0:
-            return None
-        return (today_open - prev_close) / prev_close * 100
-    except Exception as _e:
-        print(f"[EXC] intraday_cache.py get_gap_pct: {type(_e).__name__}: {_e}")
-        return None
-
-
-def get_ma20_context(code):
-    """从日K线获取 (当前MA20, 5个交易日前MA20)
-
-    2026-09-22 审计 P1-7 新增：信号A 原判据只看"现价站上MA20且连续3根"，
-    开盘3根5分钟K线即可触发，实测候选池 37 只触发 32~35 只（86%~95%），
-    等于"候选池基本都在均线上"，不构成任何筛选。
-    改进需要"MA20 本身上行"这个维度，故返回历史 MA20 供比较。
-    """
-    try:
-        mkt_conn = sqlite3.connect(MARKET_DB, timeout=60)
-        mkt_cur = mkt_conn.cursor()
-        # 取 25 根收盘价：20 根算当前 MA20，前 5 根算更早的 MA20
-        mkt_cur.execute('SELECT close FROM klines WHERE code=? ORDER BY date DESC LIMIT 25', (code,))
-        closes = [r[0] for r in mkt_cur.fetchall()]
-        mkt_conn.close()
-        if len(closes) < 25:
-            return None, None
-        ma20_now = sum(closes[:20]) / 20.0
-        ma20_prev = sum(closes[5:25]) / 20.0
-        return ma20_now, ma20_prev
-    except Exception as _e:
-        print(f"[EXC] intraday_cache.py: {type(_e).__name__}: {_e}")
-        return None, None
-
-
 def get_ma20_from_daily(code):
     """从日K线数据库获取最近20日均线值"""
     try:
@@ -316,59 +223,23 @@ def get_ma20_from_daily(code):
         print(f"[EXC] intraday_cache.py: {type(_e).__name__}: {_e}")
         return None
 
-def check_signal_a(code, klines_5min, ma20, ma20_prev=None, gap_pct=None):
+def check_signal_a(code, klines_5min, ma20):
     """
-    信号A: 站上20日均线 + 连续 N 根5分钟K线站上MA20 + MA20 本身上行
-
-    2026-09-22 审计 P1-7：原判据 `consecutive >= 3`。
-    实测 09-21 四次盘中扫描触发 32/35/35/35（候选池 37 只），
-    开盘 1 分钟即可命中 86%——信号等于"候选池都在均线上"，零筛选力。
-    更矛盾的是同一晚 double_monitor 又因"跳空 3.06%~9.55%"把其中
-    600609/603248/002453/603686 列入暂停买入，两个推送结论相反。
-
-    新判据（四项同时满足）：
-      ① 连续 >= SIGNAL_A_MIN_CONSECUTIVE 根 5 分钟 K 线收于 MA20 上方
-      ② MA20 本身上行（当前 MA20 > 5 个交易日前 MA20）——需 ma20_prev
-      ③ 现价距 MA20 偏离 <= SIGNAL_A_MAX_DEV（不追已远离均线的票）
-      ④ 高开幅度 <= SIGNAL_A_MAX_GAP_PCT —— 与 double_monitor 的跳空过滤器同源
-         （data_filters.check_gap_up：高开 >3% 即列入暂停买入）。
-         原实现使两处结论相反：信号A 当天推"买入"，当晚 double_monitor
-         又因跳空 3.06%~9.55% 把同一批股票列暂停买入，用户收到矛盾结论。
-         任一条无法判定（如 ma20_prev/gap 为 None）→ 降级为不触发，不作有利假设。
-    返回: (触发, 详情dict)
+    信号A: 站上20日均线 + 连续3根5分钟K线站上MA20
+    返回: (触发, 当前连续根数)
     """
-    if ma20 is None or len(klines_5min) < SIGNAL_A_MIN_CONSECUTIVE:
-        return False, {}
-
+    if ma20 is None or len(klines_5min) < 3:
+        return False, 0
+    
+    # 从最近开始检查连续站上
     consecutive = 0
     for k in reversed(klines_5min):
-        if k[1] > ma20:
+        if k[1] > ma20:  # close > MA20
             consecutive += 1
         else:
             break
-
-    latest_close = klines_5min[-1][1]
-    dev_pct = (latest_close - ma20) / ma20 * 100 if ma20 else 0.0
-
-    detail = {
-        'consecutive': consecutive,
-        'ma20': ma20,
-        'dev_pct': round(dev_pct, 2),
-        'ma20_rising': None if ma20_prev is None else (ma20 > ma20_prev),
-        'gap_pct': None if gap_pct is None else round(gap_pct, 2),
-    }
-
-    if consecutive < SIGNAL_A_MIN_CONSECUTIVE:
-        return False, detail
-    if ma20_prev is None or ma20 <= ma20_prev:
-        # MA20 未上行或无法判定 → 不触发
-        return False, detail
-    if dev_pct > SIGNAL_A_MAX_DEV_PCT:
-        return False, detail
-    if gap_pct is None or gap_pct > SIGNAL_A_MAX_GAP_PCT:
-        # 无法判定跳空或高开过大 → 不触发，与 double_monitor 保持一致
-        return False, detail
-    return True, detail
+    
+    return consecutive >= 3, consecutive
 
 def check_signal_b(code, klines_5min):
     """
@@ -398,24 +269,23 @@ def compute_signals(conn, kline_data):
         if len(klines) < 3:
             continue
         
-        # 获取日K MA20 及其 5 日前值（判断 TO 是否本身上行）
-        ma20, ma20_prev = get_ma20_context(code)
-        gap_pct = get_gap_pct(code)
-
+        # 获取日K MA20
+        ma20 = get_ma20_from_daily(code)
+        
         # 信号A
-        a_triggered, a_detail = check_signal_a(code, klines, ma20, ma20_prev, gap_pct)
+        a_triggered, a_consecutive = check_signal_a(code, klines, ma20)
         # 信号B
         b_triggered, b_ratio = check_signal_b(code, klines)
-
+        
         code_signals = []
-
+        
         if a_triggered:
-            code_signals.append(('A', f'连续{a_detail["consecutive"]}根5分钟K线站上MA20({ma20:.2f},偏离{a_detail["dev_pct"]:+.2f}%,均线上行)'))
+            code_signals.append(('A', f'连续{a_consecutive}根5分钟K线站上MA20({ma20:.2f})'))
             # 存入数据库
             cur.execute('''
                 INSERT OR REPLACE INTO signals (code, trade_date, signal_type, triggered_at, details)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (code, today, 'A', klines[-1][0], f'连续{a_detail["consecutive"]}根站上MA20(dev{a_detail["dev_pct"]:+.2f}%)'))
+            ''', (code, today, 'A', klines[-1][0], f'连续{a_consecutive}根站上MA20'))
         
         if b_triggered:
             code_signals.append(('B', f'倍量启动({b_ratio}x)'))
@@ -430,9 +300,7 @@ def compute_signals(conn, kline_data):
                 'signals': code_signals,
                 'ma20': round(ma20, 2) if ma20 else None,
                 'last_close': klines[-1][1],
-                'a_consecutive': a_detail.get('consecutive', 0) if a_triggered else 0,
-                'a_dev_pct': a_detail.get('dev_pct') if a_triggered else None,
-                'ma20_rising': a_detail.get('ma20_rising') if a_triggered else None,
+                'a_consecutive': a_consecutive if a_triggered else 0,
                 'b_ratio': b_ratio if b_triggered else 0,
             })
     
@@ -451,9 +319,7 @@ def format_signals(signals, pool_map):
         lines.append(f'   📌 {s["code"]} {name} | {sig_str}')
         lines.append(f'      最新价{s["last_close"]:.2f} | MA20={s["ma20"]}')
         if s['a_consecutive']:
-            _dev = s.get('a_dev_pct')
-            _dev_txt = f' 偏离{_dev:+.2f}%' if _dev is not None else ''
-            lines.append(f'      信号A: 连续{s["a_consecutive"]}根站上MA20{_dev_txt} | MA20上行=是')
+            lines.append(f'      信号A: 连续{s["a_consecutive"]}根站上MA20')
         if s['b_ratio']:
             lines.append(f'      信号B: 倍量{s["b_ratio"]}x')
     return '\n'.join(lines)

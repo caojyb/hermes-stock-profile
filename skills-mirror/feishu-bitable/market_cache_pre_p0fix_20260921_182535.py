@@ -1168,19 +1168,6 @@ def incremental_update(focus_codes: list = None, dry_run: bool = False):
                 batch_updated += 1
                 continue
 
-            # P0-1 修复（2026-09-21）：禁止覆写已修复的历史行
-            # 原逻辑：download_klines(code, market, 2000) 要 2000 天，但腾讯只返回 641 根，
-            #         然后对每一根都 INSERT OR REPLACE → 每天把最近 641 个交易日整体重写。
-            #         21 只股票因新旧源口径不同，被常数平移（如 601886 每行 -0.25），
-            #         在窗口边界产生 2.8%~10% 假跳空，且首行 change_pct 被强制清零。
-            # 新逻辑：
-            #   1) 只写入 date > 本地该股最大日期的增量行
-            #   2) 对落在已有区间内的行，与库中现值逐行比对；不一致 → 告警 + 计数，不覆写
-            local_max = conn.execute(
-                "SELECT MAX(date) FROM klines WHERE code=?", (code,)).fetchone()[0]
-            n_overwrite_blocked = 0
-            n_mismatch_warn = 0
-
             for i, k in enumerate(klines):
                 if i > 0:
                     prev_close = klines[i-1]['close']
@@ -1191,35 +1178,10 @@ def incremental_update(focus_codes: list = None, dry_run: bool = False):
                 if not _ok:
                     print(f"[DATAVAL-REJECT] {code} {k['date']}: {_reason} — 拒绝入库")
                     continue
-
-                # ---- P0-1: 增量边界保护 ----
-                if local_max and k['date'] <= local_max:
-                    # 该日期库中已有 → 不覆写，改为一致性比对
-                    n_overwrite_blocked += 1
-                    existing = conn.execute(
-                        "SELECT open, close, high, low, volume FROM klines "
-                        "WHERE code=? AND date=?", (code, k['date'])).fetchone()
-                    if existing:
-                        eo, ec, eh, el, ev = existing
-                        if (abs(float(eo) - float(k['open'])) > 1e-6 or
-                                abs(float(ec) - float(k['close'])) > 1e-6 or
-                                abs(float(eh) - float(k['high'])) > 1e-6 or
-                                abs(float(el) - float(k['low'])) > 1e-6 or
-                                abs(float(ev) - float(k['volume'])) > 1e-6):
-                            n_mismatch_warn += 1
-                            if n_mismatch_warn <= 3:
-                                print(f"[DATA-MISMATCH] {code} {k['date']}: "
-                                      f"库中 close={ec} vs 下载 close={k['close']} — 保留库中原值")
-                    continue
-
                 conn.execute("""
                     INSERT OR REPLACE INTO klines (code, date, open, close, high, low, volume, turnover, amplitude, change_pct)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (code, k['date'], k['open'], k['close'], k['high'], k['low'], k['volume'], k.get('turnover'), k.get('amplitude'), change_pct))
-
-            if n_overwrite_blocked:
-                print(f"[P0-1] {code}: 保护 {n_overwrite_blocked} 个已有交易日不被覆写"
-                      f"（其中 {n_mismatch_warn} 行与库中现值不一致，已保留库中值）")
 
             closes = [k['close'] for k in klines]
             highs = [k['high'] for k in klines]

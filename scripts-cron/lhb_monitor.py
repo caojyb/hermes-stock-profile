@@ -71,7 +71,11 @@ def fetch_lhb(trade_date=None):
     if trade_date is None:
         trade_date = date.today().isoformat()
     
-    params = {
+    # 2026-09-22 审计 P0-3：原实现只取 pageSize=100 单页。
+    # 东财该接口返回 pages 字段（实测 2026-09-21 pages=68），
+    # 当日榜单 >100 个明细时会静默丢失后续页 → 机构净买入 Top5 可能漏掉真正的头部。
+    # 现在按 pages 循环取全；单页失败重试 3 次，仍失败则记录 failed_pages 非静默告警。
+    base_params = {
         'reportName': 'RPT_DAILYBILLBOARD_DETAILSNEW',
         'columns': 'SECURITY_CODE,SECUCODE,SECURITY_NAME_ABBR,TRADE_DATE,EXPLAIN,CLOSE_PRICE,CHANGE_RATE,BILLBOARD_NET_AMT,BILLBOARD_BUY_AMT,BILLBOARD_SELL_AMT,BILLBOARD_DEAL_AMT,ACCUM_AMOUNT,TURNOVERRATE,FREE_MARKET_CAP',
         'filter': f"(TRADE_DATE='{trade_date}')",
@@ -80,14 +84,45 @@ def fetch_lhb(trade_date=None):
         'sortTypes': -1,
         'sortColumns': 'BILLBOARD_NET_AMT',
     }
-    
+
     try:
-        r = requests.get(LHB_API, params=params, timeout=15, headers=HEADERS)
-        d = r.json()
-        if not d.get('success') or not d.get('result'):
-            return [], d.get('message', 'Unknown error')
-        
-        rows = d['result']['data']
+        all_rows = []
+        failed_pages = []
+        page = 1
+        total_pages = None
+        while page <= 60:  # 上限保护，正常榜单 pages <= 数十
+            params = dict(base_params)
+            params['pageNumber'] = page
+            got = None
+            for attempt in range(1, 4):
+                try:
+                    r = requests.get(LHB_API, params=params, timeout=15, headers=HEADERS)
+                    d = r.json()
+                    if not d.get('success') or not d.get('result'):
+                        got = []
+                        break
+                    res = d['result']
+                    if total_pages is None:
+                        total_pages = res.get('pages') or 1
+                    got = res.get('data') or []
+                    break
+                except Exception as _pe:
+                    if attempt == 3:
+                        print(f"  [WARN] lhb_monitor: 第{page}页获取失败（重试3次）: {type(_pe).__name__}: {_pe}")
+                        failed_pages.append(page)
+            if got is None:
+                break  # 该页彻底失败，停止翻页
+            if not got:
+                break  # 空页 = 已到末页
+            all_rows.extend(got)
+            page += 1
+            if total_pages and page > total_pages:
+                break
+
+        if failed_pages:
+            print(f"  ⚠️ lhb_monitor: {len(failed_pages)} 页获取失败: {failed_pages}（当日龙虎榜数据可能不完整）")
+
+        rows = all_rows
         results = []
         for row in rows:
             code = row.get('SECURITY_CODE', '')
@@ -189,18 +224,26 @@ def format_report(lhb_all, matches, trade_date):
     # 概览
     lines.append(f"\n   总上榜: {len(lhb_all)} 只")
     
-    # 机构买入Top 5
+    # 机构买入/卖出 Top 5
+    # 2026-09-22 审计 P0-3：BILLBOARD_NET_AMT 是**全榜净额**（含游资/散户席位），
+    # 而 EXPLAIN 描述的是**机构席位**方向，两者不是同一口径。
+    # 原实现混用：net_amt<0 就归入"净卖出"并照搬 explain，
+    # 实测 2026-09-21 把「003026 中晶科技 4家机构买入」列进了机构净卖出榜。
+    # 修复：展示时显式标注净额方向，与 explain 的机构方向解耦，读者不再误读。
+    def _net_dir(net_amt):
+        return '净买入' if net_amt > 0 else ('净卖出' if net_amt < 0 else '持平')
+
     inst_buy = [x for x in lhb_all if x['is_institution'] and x['net_amt'] > 0]
     inst_sell = [x for x in lhb_all if x['is_institution'] and x['net_amt'] < 0]
-    lines.append(f"\n🏛️ 机构净买入Top 5:")
+    lines.append(f"\n🏛️ 机构上榜·全榜净额Top 5（净额含游资席位，与explain机构方向可能不一致）:")
     for item in sorted(inst_buy, key=lambda x: -x['net_amt'])[:5]:
         net = item['net_amt'] / 1e8
-        lines.append(f"   +{item['name']}({item['code']}) 净买入{net:.2f}亿 {item['explain']}")
-    
-    lines.append(f"\n⛔ 机构净卖出Top 5:")
+        lines.append(f"   +{item['name']}({item['code']}) {_net_dir(item['net_amt'])}{net:.2f}亿 | 机构口径: {item['explain']}")
+
+    lines.append(f"\n⛔ 机构上榜·全榜净流出Top 5:")
     for item in sorted(inst_sell, key=lambda x: x['net_amt'])[:5]:
         net = abs(item['net_amt']) / 1e8
-        lines.append(f"   -{item['name']}({item['code']}) 净卖出{net:.2f}亿 {item['explain']}")
+        lines.append(f"   -{item['name']}({item['code']}) {_net_dir(item['net_amt'])}{net:.2f}亿 | 机构口径: {item['explain']}")
     
     # 候选池交叉比对
     if matches:

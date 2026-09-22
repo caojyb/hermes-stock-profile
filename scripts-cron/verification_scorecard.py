@@ -39,7 +39,7 @@ def main():
     sp = None
     try:
         conn_o = sqlite3.connect(str(OUTCOMES), timeout=30)
-        sp = conn_o.execute("SELECT avg_excess_t20, win_rate_t20 FROM strategy_performance WHERE strategy='all'").fetchone()
+        sp = conn_o.execute("SELECT avg_excess_t20, complete_recs, total_recs FROM strategy_performance WHERE strategy='all'").fetchone()
         conn_o.close()
     except Exception as e:
         print(f"[EXC] 记分牌读归因表: {type(e).__name__}: {e}")
@@ -49,16 +49,37 @@ def main():
     lines = [f"📋 [信息] 验证期记分牌 | {date.today()} | Day {day_n}/{TOTAL_DAYS}", "=" * 46]
     lines.append(f"· 样本: {trades_n}/{MIN_TRADES} 笔" + ("（已达标）" if trades_n >= MIN_TRADES else "（不足则每20日顺延重判）"))
     lines.append(f"· 净值: {cur_value:,.0f}（基线 1,000,000）| 当前回撤: {cur_dd:.2f}%")
+    # 2026-09-22 审计 P1-8：trades_n 是【模拟仓】样本，excess 是【推荐归因】样本
+    # （recommendation_outcomes.strategy_performance，实测 826 条）。
+    # 两者是完全不同的样本群。原实现在 trades_n=0 时仍打印"超额 +3.77%"，
+    # 读者会以为模拟仓已经赚了 3.77%——实际是历史推荐归因值，模拟仓一笔未成交。
+    # 修复：样本为 0 时不输出超额；非 0 时也显式标注样本来源与量级。
     if excess is not None:
-        lines.append(f"· t20 扣成本前超额: {excess:+.2f}%（60.3bps 成本约 0.60%/回合，另计）")
+        if trades_n >= MIN_TRADES:
+            lines.append(f"· t20 扣成本前超额: {excess:+.2f}%（60.3bps 成本约 0.60%/回合，另计）")
+        else:
+            _n_recs = 0
+            try:
+                if sp:
+                    _n_recs = int(sp[1] or 0)   # complete_recs
+            except Exception:
+                _n_recs = 0
+            lines.append(f"· t20 超额: 【不出判定】模拟仓样本 {trades_n}/{MIN_TRADES} 笔，未达标")
+            lines.append(f"  （参考值：历史推荐归因 avg_excess_t20={excess:+.2f}%，"
+                         f"样本群=推荐池非模拟仓，不代表本验证期绩效）")
     # tripwire 状态
+    # 注意：excess 为推荐归因样本（非模拟仓），样本未达标时不参与退役判定，
+    # 否则历史超额为负会误触发"退役线命中"，与"未达标顺延重判"自相矛盾。
     tw = []
     if cur_dd >= 15:
         tw.append("⚠️ 15% 熔断线命中")
-    if excess is not None and excess <= 0:
-        tw.append("⚠️ 超额转负（降级区间）")
-    if excess is not None and excess <= -5:
-        tw.append("🔴 退役线命中（≤-5%）")
+    if trades_n >= MIN_TRADES:
+        if excess is not None and excess <= 0:
+            tw.append("⚠️ 超额转负（降级区间）")
+        if excess is not None and excess <= -5:
+            tw.append("🔴 退役线命中（≤-5%）")
+    else:
+        tw.append("样本未达标，tripwire 的档级判定顺延")
     lines.append(f"· Tripwire: {'; '.join(tw) if tw else '全部安全'}")
 
     # 到期判定草案（预注册标准引用）

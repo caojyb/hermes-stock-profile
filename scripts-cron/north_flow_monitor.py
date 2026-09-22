@@ -48,7 +48,7 @@ _NORTH_FLOW_MANAGER, _NORTH_FLOW_PROVIDER = _init_fund_flow_provider()
 
 def _legacy_fetch_north_top(limit=50):
     """Legacy data acquisition path. Preserved for rollback."""
-    url = "http://push2delay.eastmoney.com/api/qt/clist/get"
+    url = "https://push2delay.eastmoney.com/api/qt/clist/get"
     base_params = {
         'pn': 1, 'pz': limit, 'np': 1,
         'ut': 'bd1d9ddb04089700cf9c27f6f7426281',

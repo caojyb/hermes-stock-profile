@@ -175,7 +175,7 @@ for code in fin_data:
     # 流动性门槛：近20日日均成交额 > 3000万
     try:
         market = '1' if code.startswith(('60', '688', '689')) else '0'
-        r = __import__('requests').get(f'http://push2delay.eastmoney.com/api/qt/stock/get',
+        r = __import__('requests').get(f'https://push2delay.eastmoney.com/api/qt/stock/get',
             params={'secid': f'{market}.{code}', 'fields': 'f57,f48', 'invt': 2, 'fltt': 2},
             timeout=5, headers={'User-Agent': 'Mozilla/5.0'})
         d = r.json().get('data', {})

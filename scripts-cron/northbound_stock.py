@@ -27,12 +27,24 @@ NORTH_CACHE = str(Path(__file__).resolve().parent.parent.parent / 'stock-work' /
 
 HEADERS = {'User-Agent': 'Mozilla/5.0'}
 
+# 取数健康度阈值：全市场北向接口正常时应返回数千只有持仓标的。
+# 实测正常日 >3000 只；失败日 60 页全 RemoteDisconnected → result 为空。
+# 低于该阈值即视为"取数失败"，禁止把失败翻译成"非港股通/无持仓"结论。
+NORTH_MIN_EXPECT = 100
+NORTH_FAILED_PAGE_TOLERANCE = 20
+
+
 def fetch_all_northbound():
     """
     批量获取全市场个股北向资金数据
-    返回: {code: {net_buy, hold_value, hold_pct, hold_pct_chg}}
+    返回: (result: {code: {...}}, health: {'failed_pages': [..], 'ok': bool, 'reason': str})
+
+    2026-09-22 修复（审计 P0-4）：原实现只返回 result dict，调用方无法区分
+    「接口取数失败」与「该股确实非港股通/无持仓」——60 页全失败时 result 为空，
+    候选池 37 只全部落入 has_data=False 分支，输出"非港股通/无持仓"的貌似合理结论。
+    现在同时返回 health，调用方必须据此分流。
     """
-    url = 'http://push2delay.eastmoney.com/api/qt/clist/get'
+    url = 'https://push2delay.eastmoney.com/api/qt/clist/get'
     result = {}
     
     failed_pages = []
@@ -100,8 +112,21 @@ def fetch_all_northbound():
     # 分页失败告警（非静默）：连续失败页数过多提示接口可能异常
     if failed_pages:
         print(f'  ⚠️ 本批次 {len(failed_pages)} 页获取失败: {failed_pages}（这些页的数据缺失，可能导致北向统计不全）')
-    
-    return result
+
+    # ── 取数健康度判定（2026-09-22 审计 P0-4）──
+    # 失败页过多 或 返回数量远低于全市场应有量级 → 本次取数不可信。
+    # 关键：不能因为 result 为空就断定"股票无北向数据"，那可能是接口整体挂掉。
+    health = {'failed_pages': failed_pages, 'ok': True, 'reason': ''}
+    if len(failed_pages) > NORTH_FAILED_PAGE_TOLERANCE:
+        health['ok'] = False
+        health['reason'] = f'{len(failed_pages)}/59 页获取失败（接口异常或网络中断）'
+    elif len(result) < NORTH_MIN_EXPECT:
+        health['ok'] = False
+        health['reason'] = f'全市场仅返回 {len(result)} 只有北向数据（预期 >{NORTH_MIN_EXPECT}，接口可能限流/挂掉）'
+    if not health['ok']:
+        print(f'  🚨 北向取数失败: {health["reason"]}——本次不做"无持仓"判定')
+
+    return result, health
 
 def update_db(north_data, pool_codes=None):
     """更新数据库中的北向资金数据"""
@@ -136,16 +161,31 @@ def get_pool_codes():
     """获取候选池代码列表（统一从 double_up_scores 表读取）"""
     return [s['code'] for s in pool_loader.load_pool()]
 
-def analyze_candidates(north_data, pool_codes):
-    """分析候选池北向资金状态"""
+def analyze_candidates(north_data, pool_codes, fetch_ok=True, fetch_reason=''):
+    """分析候选池北向资金状态
+
+    fetch_ok=False（接口取数失败）时：所有候选标记为 fetch_failed，
+    **不得**标记 has_data=False——那会被下游读成"非港股通/无持仓"。
+    """
     results = []
-    
+
     for code in pool_codes:
+        if not fetch_ok:
+            results.append({
+                'code': code,
+                'has_data': False,
+                'fetch_failed': True,
+                'risk': None,
+                'bonus': None,
+            })
+            continue
+
         nd = north_data.get(code)
         if not nd:
             results.append({
                 'code': code,
                 'has_data': False,
+                'fetch_failed': False,
                 'risk': None,
                 'bonus': None,
             })
@@ -254,13 +294,21 @@ def check_consecutive_buy(code, net_buy):
     
     return all(r['net_buy'] > 0 for r in recent)
 
-def format_report(pool_analysis, pool_map):
+def format_report(pool_analysis, pool_map, fetch_ok=True, fetch_reason=''):
     """格式化输出"""
     lines = []
     lines.append(f"\n{'='*55}")
     lines.append(f"📊 个股北向资金状态 | {date.today().isoformat()}")
     lines.append(f"{'='*55}")
-    
+
+    # ── 取数失败前置拦截（2026-09-22 审计 P0-4）──
+    # 禁止把"接口挂了"输出成"非港股通/无持仓"这类貌似合理的结论。
+    if not fetch_ok:
+        lines.append(f"\n🚨 北向资金取数失败：{fetch_reason}")
+        lines.append(f"   候选池 {len(pool_analysis)} 只的北向状态【未获取】，不判定无持仓，不影响推荐评级")
+        lines.append(f"   请检查 push2delay.eastmoney.com 连通性后重试")
+        return '\n'.join(lines)
+
     has_data = [r for r in pool_analysis if r['has_data']]
     no_data = [r for r in pool_analysis if not r['has_data']]
     
@@ -279,7 +327,7 @@ def format_report(pool_analysis, pool_map):
     if no_data:
         names = [pool_map.get(r['code'], r['code']) for r in no_data]
         lines.append(f"\n📌 北向无数据({len(no_data)}只): {', '.join(names)}（非港股通/无持仓）")
-    
+
     # 风险汇总
     risks = [r for r in pool_analysis if r.get('risk')]
     bonuses = [r for r in pool_analysis if r.get('bonus')]
@@ -301,30 +349,35 @@ def format_report(pool_analysis, pool_map):
 def run(pool_codes=None):
     """主入口"""
     print(f'📊 北向资金个股数据更新 | {date.today().isoformat()}')
-    
+
     # 获取全市场北向数据
-    north_data = fetch_all_northbound()
-    print(f'   全市场有北向数据: {len(north_data)} 只')
-    
-    # 更新数据库
-    n = update_db(north_data, pool_codes)
-    print(f'   更新数据库: {n} 只')
-    
+    north_data, health = fetch_all_northbound()
+    fetch_ok = health['ok']
+    print(f'   全市场有北向数据: {len(north_data)} 只 | 取数健康: ' +
+          ('✅' if fetch_ok else '🚨 ' + health['reason']))
+
+    # 更新数据库（取数失败时不写，避免把空结果落库污染 indicators）
+    if fetch_ok:
+        n = update_db(north_data, pool_codes)
+        print(f'   更新数据库: {n} 只')
+    else:
+        print('   更新数据库: 跳过（取数失败，不写入空结果）')
+
     # 获取候选池代码
     if pool_codes is None:
         pool_codes = get_pool_codes()
-    
+
     if not pool_codes:
         print('   候选池为空，跳过分析')
         return
-    
+
     pool_map = {s['code']: s['name'] for s in pool_loader.load_pool()}
 
     # 回退：从本地数据库补全股票名称，避免北向报告只显示代码
     try:
         db_conn = sqlite3.connect(MKT_DB, timeout=60)
         db_cur = db_conn.cursor()
-        db_cur.execute('SELECT code, name FROM stocks WHERE name IS NOT NULL AND name != ""')
+        db_cur.execute("SELECT code, name FROM stocks WHERE name IS NOT NULL AND name != ''")
         for code, name in db_cur.fetchall():
             if code not in pool_map:
                 pool_map[code] = name
@@ -332,14 +385,16 @@ def run(pool_codes=None):
     except Exception:
         pass
 
-    analysis = analyze_candidates(north_data, pool_codes)
+    analysis = analyze_candidates(north_data, pool_codes,
+                                  fetch_ok=fetch_ok, fetch_reason=health['reason'])
 
-    # 更新历史缓存
-    for r in analysis:
-        if r['has_data']:
-            update_north_cache(r['code'], r['net_buy'])
+    # 更新历史缓存（仅取数成功时，失败日的历史不能被空值污染）
+    if fetch_ok:
+        for r in analysis:
+            if r['has_data']:
+                update_north_cache(r['code'], r['net_buy'])
 
-    report = format_report(analysis, pool_map)
+    report = format_report(analysis, pool_map, fetch_ok=fetch_ok, fetch_reason=health['reason'])
     print(report)
     return analysis
 

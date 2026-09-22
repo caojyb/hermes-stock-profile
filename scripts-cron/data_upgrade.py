@@ -64,7 +64,12 @@ def ensure_tables():
     """)
     
     # P1: indicators表增加估值字段
+    # 先查 PRAGMA table_info 再决定是否 ALTER，避免无条件执行触发
+    # "duplicate column name" 异常并刷 [EXC] 日志（列早已存在时功能无碍但日志像挂了）
+    existing_cols = {r[1] for r in cur.execute("PRAGMA table_info(indicators)").fetchall()}
     for col in ['ps_ttm', 'pcf_ttm']:
+        if col in existing_cols:
+            continue
         try:
             cur.execute(f"ALTER TABLE indicators ADD COLUMN {col} REAL")
         except Exception as _e:
@@ -78,7 +83,7 @@ def fetch_main_fund_flow(code):
     """从push2delay获取主力资金流向"""
     market = '1' if code.startswith(('60', '688', '689')) else '0'
     try:
-        url = 'http://push2delay.eastmoney.com/api/qt/stock/get'
+        url = 'https://push2delay.eastmoney.com/api/qt/stock/get'
         params = {'secid': f'{market}.{code}', 'fields': 'f57,f178', 'invt': 2, 'fltt': 2}
         r = requests.get(url, params=params, timeout=8, headers={'User-Agent': 'Mozilla/5.0'})
         d = r.json().get('data', {})
@@ -212,7 +217,7 @@ def estimate_ps_pcf(code, price):
     """估算PS和PCF（从push2delay的f183/f184等字段）"""
     market = '1' if code.startswith(('60', '688', '689')) else '0'
     try:
-        url = 'http://push2delay.eastmoney.com/api/qt/stock/get'
+        url = 'https://push2delay.eastmoney.com/api/qt/stock/get'
         params = {'secid': f'{market}.{code}', 'fields': 'f57,f183,f184,f185', 'invt': 2, 'fltt': 2}
         r = requests.get(url, params=params, timeout=8, headers={'User-Agent': 'Mozilla/5.0'})
         d = r.json().get('data', {})
@@ -242,7 +247,7 @@ def update_valuation(codes):
     for code in codes[:50]:
         market = '1' if code.startswith(('60', '688', '689')) else '0'
         try:
-            url = 'http://push2delay.eastmoney.com/api/qt/stock/get'
+            url = 'https://push2delay.eastmoney.com/api/qt/stock/get'
             params = {'secid': f'{market}.{code}', 'fields': 'f57,f162,f163,f164,f165,f166,f167,f183', 'invt': 2, 'fltt': 2}
             r = requests.get(url, params=params, timeout=8, headers={'User-Agent': 'Mozilla/5.0'})
             d = r.json().get('data', {})
