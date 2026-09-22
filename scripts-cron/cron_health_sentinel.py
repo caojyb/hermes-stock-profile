@@ -144,6 +144,76 @@ def scan_missed_runs() -> list:
     return findings
 
 
+def scan_dispatch_lateness() -> list:
+    """当日迟发/漏派检测（2026-09-22 审计整改 B5）。
+
+    背景：09-22 15:07 有人主动重启 gateway + 16:23 改 jobs.json，两者交错使
+    16:30/16:40/16:50 三个 slot 漏派，17:18:42 才由 catch-up 一次性补发成簇
+    —— 三写者同时打 market_cache.db，唯一写 klines 的任务等锁 60s 仍失败，
+    klines 只写出 1206/5005，下游 indicators/main_fund_flow 跟随崩塌（P0）。
+    全程无任何告警；次日 08:05 的哨兵也看不到"当天"的迟发。
+
+    判据：jobs.json 的 last_dispatch.lateness_seconds。
+    阈值 300s：实测 25 个 job 准时状态的固有偏移是 4–58s（42s 是 60s tick 的
+    固有落点），300s 远高于该基线，只抓真漏派。
+
+    只报当日（is_trading_calendar_day 已在 scan_missed_runs 里用过）；
+    非交易日直接跳过，避免周末用上周五的值误报。
+    """
+    findings = []
+    if not JOBS_JSON.exists():
+        return findings
+    try:
+        jobs = json.loads(JOBS_JSON.read_text())
+    except json.JSONDecodeError:
+        return findings
+    from exchange_holidays import is_trading_calendar_day
+    if not is_trading_calendar_day(datetime.now().date()):
+        return findings
+    job_list = jobs.get('jobs', jobs) if isinstance(jobs, dict) else jobs
+    if isinstance(job_list, dict):
+        job_list = list(job_list.values())
+    today = datetime.now().date().isoformat()
+    for j in job_list:
+        if not isinstance(j, dict) or not j.get('enabled', True):
+            continue
+        disp = j.get('last_dispatch')
+        if not isinstance(disp, dict):
+            continue
+        lateness = disp.get('lateness_seconds')
+        at = disp.get('dispatched_at') or ''   # 字段名是 dispatched_at，不是 at
+        # 只认当日 dispatch：迟发 slot 的 dispatched_at 是补发时刻（17:18），
+        # 落在当天即可报；跨天历史迟发不重复刷。
+        if not lateness or lateness <= 0 or not at:
+            continue
+        try:
+            lateness_f = float(lateness)
+        except (TypeError, ValueError):
+            continue
+        # 迟到跨越到次日的（如周五晚补发到周六）不报，避免周末噪音
+        try:
+            disp_date = datetime.fromisoformat(at).date()
+        except ValueError:
+            continue
+        # 报"今天或昨天"：收盘后的哨兵（17:15）在当天跑；
+        # 但 08:05 的每日哨兵复盘的是过去 24h，其中昨天的傍晚漏派必须仍能报出来，
+        # 否则"15:07 重启导致 16:30 漏派"这类事故要等到次日 08:05 之后才消失、
+        # 而傍晚发生时反而无声（这正是 09-22 的形态）。
+        today = datetime.now().date()
+        if disp_date not in (today, today.fromordinal(today.toordinal() - 1)):
+            continue
+        if lateness_f > 300:
+            findings.append({
+                'job_id': j.get('job_id', j.get('name', '?')),
+                'name': j.get('name', ''),
+                'lateness_seconds': round(lateness_f),
+                'scheduled_at': (disp.get('scheduled_at') or '')[:19],
+                'last_dispatch_at': at[:19],
+                'today': today.isoformat(),
+            })
+    return findings
+
+
 def main():
     send = '--send' in sys.argv
     # 顺带轮转 crash 日志（超过 5MB 滚动保留 3 片）
@@ -160,8 +230,9 @@ def main():
     warn_hits = scan_warn_in_output(since)
     failed = scan_failed_executions(since)
     missed = scan_missed_runs()
+    late = scan_dispatch_lateness()
 
-    if not (warn_hits or failed or missed):
+    if not (warn_hits or failed or missed or late):
         print()  # watchdog: 全健康则静默
         return
 
@@ -170,6 +241,12 @@ def main():
         lines.append(f"\n❌ 执行失败 ({len(failed)}):")
         for x in failed[:10]:
             lines.append(f"  {x['job_id']} {x['status']} @{x['at']} {x['error'][:60]}")
+    if late:
+        lines.append(f"\n⏰ 当日迟发/漏派 ({len(late)}) —— 阈值 300s:")
+        for x in late[:10]:
+            lines.append(f"  {x['name'] or x['job_id']} 迟发 {x['lateness_seconds']}s "
+                         f"(应于 {x['scheduled_at'][11:19]}，实派 {x['last_dispatch_at'][11:19]})")
+        lines.append("  注：迟发 slot 会被 catch-up 补发成簇，多写者同刻打同一库即 P0 撞锁形态")
     if warn_hits:
         lines.append(f"\n⚠️ exit 0 但输出含 WARN（静默失败） ({len(warn_hits)} 个输出文件):")
         for x in warn_hits[:10]:

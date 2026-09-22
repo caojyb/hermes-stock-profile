@@ -496,9 +496,17 @@ def refresh_main_fund_flow(date_str):
     if malformed:
         print(f'  ⚠️ {malformed} 条 code 带交易所前缀/后缀（应为 0）——下游按裸代码 join 会漏掉它们')
     if distinct_codes < MAIN_FUND_MIN_COVERAGE:
+        # 2026-09-22 审计整改 B3：覆盖量不足不再只是打印，而是让整个 job 失败。
+        # 此前这里是 print + return，job 记 completed——"报了但没人把它当失败"，
+        # 比完全不报更危险（训练人忽略告警）。东财 push2delay 间歇不可达时
+        # 覆盖确实会掉到 36 只，那时失败就是事实；sentiment_thermo 曾经
+        # 拿 36 只冒充全市场净流入正是这个形态。
         print(f'  🚨 主力资金覆盖量异常：当日仅 {distinct_codes} 只'
               f'（阈值 {MAIN_FUND_MIN_COVERAGE}）——接口可能失败或源不可用，'
               f'任何基于该表的"全市场资金"结论均不可信')
+        raise RuntimeError(
+            f'MAIN_FUND_COVERAGE_LOW: distinct_codes={distinct_codes} '
+            f'< threshold={MAIN_FUND_MIN_COVERAGE} (date={date_str})')
     return count
 
 
@@ -877,6 +885,13 @@ def main():
         print(f'完成（有错误）: {"; ".join(errors)}')
     else:
         print('done')
+
+    # 2026-09-22 审计整改 B3：有错误必须让进程退出码非零。
+    # 原实现在 errors 非空时仍 print + 自然结束 → exit 0，
+    # cron 记 completed、executions.db status=completed（假成功）。
+    # 这是"覆盖量告警存在但没人把它当失败"的最终根因。
+    if errors:
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()
