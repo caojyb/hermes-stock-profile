@@ -2,7 +2,7 @@
 
 ## 概述
 
-股票系统 Cron 任务调度图。当前共 **24 个 job**（24 enabled / 0 paused），按触发时机分为日间链和周链。
+股票系统 Cron 任务调度图。当前共 **25 个 job**（25 enabled / 0 paused），按触发时机分为日间链和周链。
 
 ## 日间链（交易日）
 
@@ -18,9 +18,9 @@
 | */15 9-14 | `stock-intraday-minute` | `intraday_monitor.py` | 盘中监控（脚本内交易时段守卫，午休/盘后跳过） | 信号✅ | 活跃 |
 | 11:30(六) | `stock-recommendation-pool-weekly` | `weekly_pool_report.sh` | 推荐池周报 | ✅ | 活跃 |
 | 15:35 | `closing-snapshot` | `closing_snapshot.sh` | 收盘快照（情绪+龙虎榜+舆情三合一，FEISHU_DISABLE 全局禁推子脚本） | ✅ | 2026-09-19 合并 sentiment/lhb/news |
-| 16:30 | `stock-market-cache-refresh` | `market_cache_refresh.sh` | 全市场K线增量刷新 | 失败✅ | 活跃 |
-| 16:40 | `daily-data-refresh` | `daily_data_refresh.py` | 盘后数据刷新 (K线/财务/龙虎榜) | ❌ | 活跃 |
-| 16:50 | `double-monitor-daily` | `double_monitor.py` | 翻倍策略信号扫描+模拟交易 | ✅ | 活跃 |
+| 16:30 | `stock-market-cache-refresh` | `db_lock_refresh.run.sh` → `market_cache_refresh.sh` | 全市场K线增量刷新（**全局写锁持有者**） | 失败✅ | 2026-09-22 接入 db 写锁（P0 撞锁修复） |
+| 16:40 | `daily-data-refresh` | `db_lock_daily.run.sh` → `daily_data_refresh.py` | 盘后数据刷新 (K线/财务/龙虎榜/主力资金) | ❌ | 2026-09-22 接入 db 写锁 |
+| 16:50 | `double-monitor-daily` | `db_lock_monitor.run.sh` → `double_monitor.py` | 翻倍策略信号扫描+模拟交易 | ✅ | 2026-09-22 接入 db 写锁 |
 | 17:10 | `deep-position-review` | (agent) | 持仓深度综合诊断 | ✅ | 2026-09-18 从16:50挪出避让 |
 | 17:30 | `track-outcomes-daily` | `track_outcomes.py` | 推荐结果 outcome 回写 | 异常✅ | 2026-09-18 限交易日 |
 | 17:50 | `check-market-cache-health` | `check_market_cache_health.py` | 健康检查 3 项（最近一次刷新语义：市场基数/stocks 表、duration 状态联动）+ 关键表新鲜度 4 项 | 异常✅ | 2026-09-19 模拟周一干跑后再修 2 语义 bug |
@@ -31,6 +31,7 @@
 
 | 时间 | Job | 脚本 | 职责 | 飞书推送 | 状态 |
 |------|-----|------|------|----------|------|
+| 03:00(日) | `db-backup-weekly` | `db_backup.sh` | market_cache.db + simulation.db 周备份（自校验 klines/表集，失败 exit 1 + 飞书告警） | 失败✅ | 2026-09-22 新增（审计整改 B2：原 BACKUP_ROOT 指向不存在的 /mnt 且从未注册 cron） |
 | 16:00 | `sunday-mega` | `sunday_mega.sh` | 周日数据日：基本面→周选(含环境段)→全流程→解禁 | ✅ | 2026-09-19 合并 4→1 |
 
 

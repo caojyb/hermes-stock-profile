@@ -576,6 +576,13 @@ def _refresh_westock_main_fund_flow(date_str: str, batch_size: int = 10) -> int:
             if not code:
                 continue
             code_bare = code.split('.')[0][-6:] if '.' in code else code[-6:]
+            # 2026-09-22 审计 D1 追加：westock asfund 会对汇总行返回 SecuCode='-'
+            # （非空字符串，if not code 拦不住），经 [-6:] 后原样落库成 code='-'。
+            # 该行 net_amt 恒为 0，却占用 main_fund_flow 主键，
+            # 既污染"去重股票数"（覆盖量告警基数虚高），也让任何 code 维度 join 多出一行。
+            # 只接受 6 位数字代码，其余一律跳过。
+            if not (len(code_bare) == 6 and code_bare.isdigit()):
+                continue
             try:
                 main_net = float(row.get('MainNetFlow') or 0)
             except (TypeError, ValueError):
